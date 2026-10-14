@@ -464,7 +464,7 @@ class Hub:
             key = (str(directory), aid)
             state = self._recovery.setdefault(key, {'attempts': 0, 'since': None, 'pending': False})
             mode = control.get('Control', 'Mode', fallback='stop')
-            if mode != 'run' and not control.getboolean('Control', 'Recover', fallback=False):
+            if mode not in ('run', 'pause') and not control.getboolean('Control', 'Recover', fallback=False):
                 state['pending'] = False
                 state['since'] = None
                 continue
@@ -472,10 +472,11 @@ class Hub:
             game_pid = int(status.get('gamepid', 0))
             crash = any(d['pid'] == game_pid or (not game_pid and os.path.normcase(d['path']) == os.path.normcase(account.get('gw_exe', ''))) for d in dialogs)
             identity = int(status.get('launchpid', status.get('pid', 0))) == worker_pid
-            failed = crash or (identity and status.get('phase') == 'Error') or not alive(worker_pid)
+            client_exited = identity and game_pid > 0 and not alive(game_pid)
+            failed = crash or client_exited or (identity and status.get('phase') == 'Error') or not alive(worker_pid)
             if state['pending']:
                 if not alive(worker_pid) and not self.busy:
-                    write_control(directory / (aid + '.command.ini'), mode='run', close_game=False)
+                    write_control(directory / (aid + '.command.ini'), mode=state.get('resume_mode', 'run'), close_game=False)
                     self.launch_queue.append((account['team'], directory, account))
                     state.update(pending=False, since=None)
                     self.busy = True
@@ -487,7 +488,12 @@ class Hub:
                 continue
             if not failed:
                 state['since'] = None
+                if identity and status.get('phase') not in ('Error', 'Stopped') and game_pid and alive(game_pid):
+                    state.setdefault('healthy_since', now)
+                    if now - state['healthy_since'] >= 120:
+                        state['attempts'] = 0
                 continue
+            state.pop('healthy_since', None)
             if state['since'] is None:
                 state['since'] = now
             if not crash and now - state['since'] < 8:
@@ -495,7 +501,7 @@ class Hub:
             if state['attempts'] >= 3:
                 continue
             state['attempts'] += 1
-            state.update(pending=True, since=now)
+            state.update(pending=True, since=now, resume_mode=mode if mode in ('run', 'pause') else state.get('resume_mode', 'run'))
             write_control(directory / (aid + '.command.ini'), mode='stop', close_game=True, recover=True)
             self.notice.set(f"Restarting {account['character']} after failure ({state['attempts']}/3); crash reports use Don't Send.")
 

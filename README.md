@@ -1,4 +1,4 @@
-# Skelefarm Hub / Python SkeleBot — v0.4.2
+# Skelefarm Hub / Python SkeleBot — v0.4.3
 
 A Windows Python hub and Python farm controller for selected Guild Wars accounts. The desktop uses EncounterHub's PySide6 implementation pattern and the same charcoal/teal stylesheet, checkboxes, per-row controls, and saved column widths.
 
@@ -132,7 +132,7 @@ Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe
 Keep these together:
 
 - `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.4.2.exe`
+- `Skelefarm-worker-0.4.3.exe`
 
 The Python worker embeds its versioned x86 bridge. Target PCs need neither Python nor AutoIt once built. Pin the hub executable to the taskbar.
 
@@ -155,3 +155,5 @@ Add `-AutoItDir 'C:\YourPath\AutoIt3'` for another installation. Builds run Auto
 The v0.2.1 updater passed all 29 Windows checks, real replacement/restart and rollback tests with an independent worker left running, and a public download/checksum/package validation check.
 
 Version 0.3 adds Python farm-scenario tests and a Qt desktop smoke test. Live game behavior, combat/build suitability, current memory signatures and repeated UW entry require supervised in-game testing. Begin with two accounts. These changes do not claim a completed live farm test.
+
+Unexpected client exits are detected by the hub even if the worker has not reported an error. Recovery restarts the account in the same team session, preserving Run/Pause. Stop cancels recovery. Three consecutive failures stop retries; two minutes of healthy operation reset that allowance. Rejoining uses the existing ToA party assembly workflow.

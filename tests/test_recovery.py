@@ -34,6 +34,25 @@ class RecoveryTests(unittest.TestCase):
             self.assertTrue(hub.busy)
             self.assertFalse(state['pending'])
 
+    def test_dead_client_detected_without_worker_error_and_pause_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hub = self.setup_hub(directory)
+            path = Path(directory)
+            write_control(path / 'one.command.ini', mode='pause')
+            write_ini(path / 'one.status.ini', {'Worker': {'PID': 123, 'Phase': 'Paused', 'GamePID': 456}})
+            with patch('controller.dismiss_crash_dialogs', return_value=[]), patch('controller.alive', side_effect=lambda pid: pid == 123), patch('controller.time.monotonic', return_value=100) as clock:
+                Hub.recovery_tick(hub)
+                clock.return_value = 109
+                Hub.recovery_tick(hub)
+            self.assertTrue(hub._recovery[(directory, 'one')]['pending'])
+            with patch('controller.dismiss_crash_dialogs', return_value=[]), patch('controller.alive', return_value=False), patch('controller.time.monotonic', return_value=113):
+                Hub.recovery_tick(hub)
+            import configparser
+            control = configparser.ConfigParser()
+            control.read(path / 'one.command.ini', encoding='utf-16')
+            self.assertEqual(control['Control']['Mode'], 'pause')
+            self.assertTrue(hub.busy)
+
     def test_manual_stop_cancels_pending_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
             hub = self.setup_hub(directory)

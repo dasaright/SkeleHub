@@ -88,3 +88,7 @@ Version 0.4.1 initializes and verifies the template once per worker/character in
 ## v0.4.2
 
 Currency handling now visits Eye of the North (map 642) and Roland for both manual testing and seasonal ectoplasm purchases. Existing persisted embark stages route to the new destination without resetting purchase progress. Buying limits and return to ToA are unchanged.
+
+## v0.4.3
+
+Detect exited game processes independently of worker error reporting; relaunch into the existing team session and retain Run/Pause. Explicit Stop cancels recovery. Reset consecutive retry allowance after two healthy minutes.
