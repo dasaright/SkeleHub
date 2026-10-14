@@ -47,3 +47,24 @@ jobs:
             gh release create $tag $asset --target $env:GITHUB_SHA --latest --title "SkeleHub $tag" --notes "Windows test build. See README for setup and supervised game testing."
             if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
           }
+      - name: Verify public updater download
+        shell: pwsh
+        run: |
+          @'
+          import tempfile, time
+          from updater import check_release, stage_release
+          from version import VERSION
+          for attempt in range(6):
+              try:
+                  release = check_release('0.0.0')
+                  assert release and release['version'] == VERSION, 'Latest release does not match build'
+                  with tempfile.TemporaryDirectory() as data:
+                      stage_release(release, data)
+                  print('Public release lookup, download, checksum and package validation passed.')
+                  break
+              except Exception:
+                  if attempt == 5:
+                      raise
+                  time.sleep(3)
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'Public updater download verification failed' }
