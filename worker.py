@@ -73,6 +73,7 @@ class Worker:
         self.runs = self.fails = self.captures = self.kills = self.cycle = 0
         self.last_action = -1000
         self.build_loaded = False
+        self.build_verified = False
         self.build_time = 0
         self.build_attempts = 0
         self.prepare_ready_at = 0
@@ -81,6 +82,9 @@ class Worker:
         self.charge_confirmed = False
         self.charge_requested_at = None
         self.charge_attempts = 0
+        self.smoke_confirmed = False
+        self.smoke_requested_at = None
+        self.smoke_attempts = 0
         self.target = 0
         self.step = 0
         self.cast_until = 0
@@ -103,9 +107,6 @@ class Worker:
 
     def change(self, phase, message):
         if phase == 'Prepare' and self.phase != 'Prepare':
-            self.build_attempts = 0
-            self.build_loaded = False
-            self.build_time = 0
             self.prepare_ready_at = self.clock() + 2.5
         self.phase, self.state = phase, message
         self.phase_started = self.clock()
@@ -129,8 +130,9 @@ class Worker:
         fields = {'Stamp': f'{datetime.now():%Y/%m/%d %H:%M:%S}', 'PID': os.getpid(),
                   'LaunchPID': os.getppid() if getattr(sys, 'frozen', False) else os.getpid(),
                   'WorkerVersion': VERSION, 'BuildTemplate': BUILD, 'BuildSkills': ','.join(map(str, SKILLS)),
-                  'BuildAttempts': self.build_attempts, 'EntryLeader': self.entry_leader_id,
+                  'BuildAttempts': self.build_attempts, 'BuildInitialized': int(self.build_verified), 'EntryLeader': self.entry_leader_id,
                   'ChargeConfirmed': int(self.charge_confirmed), 'ChargeAttempts': self.charge_attempts,
+                  'SmokeConfirmed': int(self.smoke_confirmed), 'SmokeAttempts': self.smoke_attempts,
                   'Character': self.character, 'Phase': self.phase, 'State': self.state, 'Mode': self.mode,
                   'Cycle': self.cycle, 'TestMode': int(self.test_mode), 'Kills': self.kills,
                   'KillVerified': int(self.kill_verified), 'Target': self.target,
@@ -238,7 +240,8 @@ class Worker:
                         if not self.login_wait():
                             return False
                         continue
-                    self.change('Travel', 'Character verified; previous party left; rendering disabled')
+                    self.prepare_ready_at = self.clock() + 2.5
+                    self.change('Initialize', 'Character loaded; initializing current skill template')
                     return True
             elif login.get('selection') and login.get('index', -1) >= 0:
                 self.state = 'Selecting configured character'
@@ -326,26 +329,73 @@ class Worker:
         if self.s.get('map') == UW and self.s.get('instance') == 1 and self.phase in ('Travel', 'Prepare', 'Party', 'Ready', 'Move', 'Entry'):
             self.start_fight()
             return True
-        if self.mode == 'pause' and self.s.get('instance') == 0:
+        request = control.get('Control', 'CurrencyRequest', fallback='')
+        if request:
+            self.economy.request_currency(request)
+        if self.mode == 'pause' and self.s.get('instance') == 0 and not self.economy.currency_pending:
             if self.phase != 'Paused':
                 self.change('Paused', 'Paused in outpost')
             return True
         if self.phase == 'Paused':
-            self.change('Travel', 'Resuming team')
+            self.change('Travel' if self.build_verified else 'Initialize', 'Resuming team')
         if self.economy.tick():
             return True
-        {'Travel': self.travel, 'Prepare': self.prepare, 'Party': self.party, 'Ready': self.party,
+        {'Initialize': self.initialize, 'Travel': self.travel, 'Prepare': self.prepare, 'Party': self.party, 'Ready': self.party,
          'Move': self.move, 'Entry': self.entry, 'Fight': self.fight, 'Done': self.done,
          'Return': self.return_to_town}.get(self.phase, lambda: None)()
         return True
 
     def travel(self):
         if self.location_matches():
-            self.change('Prepare', 'Checking build' if self.test_mode else 'Checking build and supplies')
+            self.change('Prepare', 'Checking skill recharge' if self.test_mode else 'Checking supplies and skill recharge')
         elif self.elapsed() > 60:
             self.error('Travel to the configured town/district timed out')
         elif self.due(5):
             self.game.call('travel', TOA, self.destination['region'], self.destination['district'], self.destination['language'])
+
+    def initialize(self):
+        if self.ensure_initial_build():
+            self.change('Travel', 'Template initialized; travelling to Temple of the Ages')
+
+    def ensure_initial_build(self):
+        if self.build_verified:
+            return True
+        if self.clock() < self.prepare_ready_at:
+            self.state = 'Waiting for character skill data'
+            return False
+        primary = int(self.s.get('primary', 0))
+        if not primary:
+            self.state = 'Waiting for profession data'
+            if self.elapsed() > 60:
+                self.error('Character profession data did not load')
+            return False
+        if primary != 7:
+            self.error('The Skelefarm template requires an Assassin primary profession')
+            return False
+        verified = (int(self.s.get('secondary', 0)) == 3
+                    and int(self.s.get('smiting', 0)) == 12 and int(self.s.get('shadow', 0)) == 12
+                    and [int(x) for x in str(self.s.get('skills', '')).split(',') if x] == SKILLS)
+        if not self.build_loaded or not verified:
+            if self.build_attempts and self.clock() - self.build_time < 15:
+                self.state = 'Waiting for template professions, attributes and skills'
+                return False
+            if self.build_attempts >= 3:
+                self.error('Farm template verification failed; check Monk secondary, attribute points and unlocked skills')
+                return False
+            self.build_attempts += 1
+            self.log(f'Template {BUILD}, attempt {self.build_attempts}/3; observed primary={primary}, secondary={self.s.get("secondary")}, smiting={self.s.get("smiting")}, shadow={self.s.get("shadow")}, skills={self.s.get("skills")}')
+            self.state = 'Loading current Assassin/Monk farm template'
+            self.publish()
+            loaded = self.game.call('build', BUILD) == '1'
+            self.build_loaded, self.build_time = loaded, self.clock()
+            if not loaded:
+                self.state = 'Template load pending; checking secondary profession and unlocks'
+            return False
+        if self.clock() - self.build_time < 2.5:
+            return False
+        self.build_verified = True
+        self.log('Initialization template verified; town returns will not reload it')
+        return True
 
     def prepare(self):
         if not self.location_matches():
@@ -359,39 +409,11 @@ class Worker:
             if not inv.get('mobstoppers') or not inv.get('free'):
                 self.error('Farm mode requires an Everlasting Mobstopper and a free bag slot')
                 return
-        primary = int(self.s.get('primary', 0))
-        if not primary:
-            self.state = 'Waiting for profession data'
-            if self.elapsed() > 60:
-                self.error('Character profession data did not load')
-            return
-        if primary != 7:
-            self.error('The Skelefarm template requires an Assassin primary profession')
-            return
-        verified = (int(self.s.get('secondary', 0)) == 3
-                    and int(self.s.get('smiting', 0)) == 12 and int(self.s.get('shadow', 0)) == 12
-                    and [int(x) for x in str(self.s.get('skills', '')).split(',') if x] == SKILLS)
-        if not self.build_loaded or not verified:
-            if self.build_attempts and self.clock() - self.build_time < 15:
-                self.state = 'Waiting for template professions, attributes and skills'
-                return
-            if self.build_attempts >= 3:
-                self.error('Farm template verification failed; check Monk secondary, attribute points and unlocked skills')
-                return
-            self.build_attempts += 1
-            self.log(f'Template {BUILD}, attempt {self.build_attempts}/3; observed primary={primary}, secondary={self.s.get("secondary")}, smiting={self.s.get("smiting")}, shadow={self.s.get("shadow")}, skills={self.s.get("skills")}')
-            self.state = 'Loading current Assassin/Monk farm template'
-            self.publish()
-            loaded = self.game.call('build', BUILD) == '1'
-            self.build_loaded, self.build_time = loaded, self.clock()
-            if not loaded:
-                self.state = 'Template load pending; checking secondary profession and unlocks'
-            return
-        if self.clock() - self.build_time < 2.5:
+        if not self.build_verified and not self.ensure_initial_build():
             return
         cooldowns = self.cooldowns()
-        if any(cooldowns[i] > 0 for i in (2, 4, 5, 6)):
-            self.state = 'Waiting for damage skills to recharge'
+        if any(cooldowns[i] > 0 for i in (2, 3, 4, 5, 6)):
+            self.state = 'Waiting for combat skills, including Smoke Powder Defense, to recharge'
             if self.elapsed() > 90:
                 self.error('Skills did not recharge')
             return
@@ -405,6 +427,12 @@ class Worker:
             return
         if not self.location_matches():
             self.change('Travel', 'Regrouping in configured district')
+            return
+        currency_peers = [m['character'] for m in self.members if m['id'] != self.id
+                          and read_status(self.session / (m['id'] + '.status.ini')).get('currencyactive') == '1']
+        if currency_peers:
+            self.phase_started = self.clock()
+            self.state = 'Waiting for currency handling: ' + ', '.join(currency_peers)
             return
         if self.exact_party():
             if self.phase != 'Ready':
@@ -507,6 +535,9 @@ class Worker:
                 self.cycle = int(leader.get('cycle', 0))
         self.target, self.step, self.cast_until = 0, 0, 0
         self.kill_verified = False
+        self.smoke_confirmed = False
+        self.smoke_requested_at = None
+        self.smoke_attempts = 0
         self.charge_confirmed = False
         self.charge_requested_at = None
         self.charge_attempts = 0
@@ -607,6 +638,31 @@ class Worker:
             delay = float(self.game.call('cast', 2, self.target))
             self.cast_until = self.clock() + max(.3, delay)
             return
+        if slot == 3:
+            cooldown = self.cooldowns().get(3, 0)
+            if self.smoke_requested_at is not None:
+                if cooldown > 0:
+                    self.smoke_confirmed = True
+                    self.step += 1
+                    return
+                if self.clock() - self.smoke_requested_at < 3:
+                    self.state = 'Confirming Smoke Powder Defense before Signet'
+                    return
+                self.smoke_requested_at = None
+            if cooldown > 0:
+                self.state = 'Waiting for Smoke Powder Defense; Signet blocked'
+                return
+            if self.smoke_attempts >= 3:
+                self.finish(False, 'Smoke Powder Defense failed; returning to town')
+                return
+            self.smoke_attempts += 1
+            self.smoke_requested_at = self.clock()
+            delay = float(self.game.call('cast', 3, -2))
+            self.cast_until = self.clock() + max(.3, delay)
+            return
+        if slot == 4 and not self.smoke_confirmed:
+            self.step = SEQUENCE.index(3)
+            return
         if (slot == 6 and agent.get('hp', 1) >= .49) or self.cooldowns().get(slot, 0) > 0:
             self.step += 1
             return
@@ -667,7 +723,7 @@ class Worker:
             if self.due(1):
                 self.game.call('attack', self.target)
             if self.cooldowns().get(4, 0) == 0:
-                self.step = 3
+                self.step = SEQUENCE.index(4)
 
     def done(self):
         if self.test_mode:

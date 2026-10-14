@@ -33,7 +33,7 @@ class QtDesktopTests(unittest.TestCase):
                 window = Desktop()
                 try:
                     self.assertEqual(window.grid.rowCount(), 1)
-                    for key in ('plat', 'storage_plat', 'skeletons', 'funding'):
+                    for key in ('plat', 'storage_plat', 'skeletons', 'funding', 'currency'):
                         self.assertIn(key, COLUMNS)
                     self.assertIn('#14171c', STYLE)
                     self.assertIn('#52d4ba', STYLE)
@@ -47,6 +47,21 @@ class QtDesktopTests(unittest.TestCase):
                     self.assertEqual(window.table.selection(), ('one',))
                     self.assertIsNotNone(window.grid.cellWidget(0, COLUMNS.index('pause')))
                     self.assertIsNotNone(window.grid.cellWidget(0, COLUMNS.index('launch')))
+                    from worker import read_ini
+                    from PySide6.QtWidgets import QPushButton
+                    session = root / 'test-session'
+                    session.mkdir()
+                    command = session / 'one.command.ini'
+                    write_ini(command, {'Control': {'Mode': 'pause', 'DisableRendering': 1}})
+                    window.sessions = {'Team 1': {'dir': str(session), 'pids': {'one': 123}}}
+                    with patch.object(controller, 'alive', return_value=True):
+                        window.grid.cellWidget(0, COLUMNS.index('currency')).click()
+                        first = read_ini(command)['Control']['CurrencyRequest']
+                        self.assertEqual(read_ini(command)['Control']['Mode'], 'pause')
+                        selected_button = next(b for b in window.findChildren(QPushButton) if b.text() == 'Handle Currency Selected')
+                        selected_button.click()
+                        self.assertNotEqual(read_ini(command)['Control']['CurrencyRequest'], first)
+                        self.assertEqual(read_ini(command)['Control']['DisableRendering'], '1')
                     window.show()
                     self.app.processEvents()
                     # CI screenshot is synthetic account data only.

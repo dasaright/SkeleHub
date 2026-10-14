@@ -56,8 +56,32 @@ class Economy:
         self.pending_withdraw = None
         self.hold = None
         self.progress = self.read_json(self.local_path, {})
+        self.currency_path = worker.session / (worker.id + '.currency.json')
+        self.currency = self.read_json(self.currency_path, {})
         self.stage_since = worker.clock()
         self.action_at = -1000
+
+    @property
+    def currency_pending(self):
+        return bool(self.currency.get('active'))
+
+    def request_currency(self, token):
+        if token == self.currency.get('seen'):
+            return
+        if self.currency_pending:
+            self.currency['seen'] = token  # coalesce repeated clicks, never reset an in-flight buy
+        else:
+            self.currency = dict(seen=token, generation=token, stage='leave', district=1, active=True)
+        atomic_text(self.currency_path, json.dumps(self.currency))
+
+    def handle_currency(self):
+        seasonal_progress, seasonal_path = self.progress, self.local_path
+        self.progress, self.local_path = self.currency, self.currency_path
+        try:
+            return self.turnin(manual=True)
+        finally:
+            self.currency = self.progress
+            self.progress, self.local_path = seasonal_progress, seasonal_path
 
     @staticmethod
     def read_json(path, fallback):
@@ -100,7 +124,9 @@ class Economy:
                     FundingState='Empty on Plat' if self.inv and empty_on_plat(self.inv) else 'Funded',
                     EconomyMode=self.shared.get('mode', 'farm'), EconomyLeader=self.shared.get('leader', ''),
                     EconomyStage=self.progress.get('stage', ''),
-                    EconomyDone=self.progress.get('done_generation', -1))
+                    EconomyDone=self.progress.get('done_generation', -1),
+                    CurrencyActive=int(self.currency_pending), CurrencyStage=self.currency.get('stage', ''),
+                    CurrencyRequestSeen=self.currency.get('seen', ''))
 
     def refresh_inventory(self, force=False):
         if force or self.w.clock() - self.last_poll >= 1:
@@ -109,7 +135,7 @@ class Economy:
 
     def tick(self):
         w = self.w
-        if not self.enabled or w.assemble_only:
+        if (not self.enabled or w.assemble_only) and not self.currency_pending:
             return False
         if w.s.get('instance') != 0:
             return False
@@ -117,10 +143,21 @@ class Economy:
         self.shared = self.read_shared()
         w.leader_id = self.shared['leader']
         w.is_leader = w.id == w.leader_id
+        mode = self.shared['mode']
+        if self.currency_pending and w.build_verified and (mode != 'turnin' or not self.turnin_enabled):
+            if self.currency.get('stage') == 'leave':
+                self.hold = None
+                self.stage_since = w.clock()
+                self.action_at = -1000
+            if self.hold:
+                w.state = self.hold
+                return True
+            return self.handle_currency()
+        if not self.enabled or w.assemble_only:
+            return False
         if self.hold:
             w.state = self.hold
             return True
-        mode = self.shared['mode']
         if mode == 'hold':
             w.state = self.shared.get('reason', 'Economy needs attention')
             if w.phase != 'EconomyHold':
@@ -203,23 +240,24 @@ class Economy:
             self.block('Economy travel timed out; verify outpost access and district')
         return False
 
-    def turnin(self):
+    def turnin(self, manual=False):
         w = self.w
-        generation = self.shared['generation']
+        generation = self.progress.get('generation') if manual else self.shared['generation']
         if self.progress.get('generation') != generation:
             self.progress = dict(generation=generation, district=1)
             self.stage('leave')
-        if w.phase != 'TurnIn' and not self.hold:
-            w.change('TurnIn', 'Turn In Mobs — independent account workflow')
+        phase = 'Currency' if manual else 'TurnIn'
+        if w.phase != phase and not self.hold:
+            w.change(phase, 'Handle Currency — independent Embark test' if manual else 'Turn In Mobs — independent account workflow')
         stage = self.progress['stage']
-        w.state = 'Turn In Mobs — ' + stage
+        w.state = ('Handle Currency — ' if manual else 'Turn In Mobs — ') + stage
         if stage == 'leave':
             w.game.call('leave')
             self.stage('separate')
         elif stage == 'separate':
             roster = [p for p in str(w.s.get('roster', '')).split(',') if p]
             if len(roster) <= 1 and not w.s.get('heroes') and not w.s.get('henchmen'):
-                self.stage('assess')
+                self.stage('embark' if manual else 'assess')
             elif self.due():
                 w.game.call('leave')
             if w.clock() - self.stage_since > 20:
@@ -308,7 +346,11 @@ class Economy:
             if decision == 'quote':
                 self.block('No valid ectoplasm quote or price exceeds inventory gold limit')
             elif decision in ('band', 'turnin'):
-                self.stage('home' if self.inv.get('captured', 0) <= 2 else 'la')
+                outcome = ('Below buying threshold; no purchase needed' if total_value(self.inv) < 800_000
+                           else 'Currency value is in the target band' if decision == 'band'
+                           else 'Cannot afford another quote; skeletons retained')
+                w.log(f'Currency handling: {outcome}; quote={quote}, total value={total_value(self.inv)} gold')
+                self.stage('home' if manual or self.inv.get('captured', 0) <= 2 else 'la', outcome=outcome)
             elif decision == 'withdraw':
                 amount = withdrawal_to_target(self.inv, 100_000)
                 w.game.call('storage')
@@ -333,6 +375,10 @@ class Economy:
         elif stage == 'home':
             if self.travel(TOA, district=w.destination['district']):
                 self.stage('done', done_generation=generation)
+        elif stage == 'done' and manual:
+            self.progress['active'] = False
+            atomic_text(self.local_path, json.dumps(self.progress))
+            w.change('Paused' if w.mode == 'pause' else 'Prepare', 'Handle Currency complete; back in ToA — ' + self.progress.get('outcome', 'purchases confirmed'))
         elif stage == 'done':
             w.state = 'Turn-ins complete; waiting in ToA for team'
             if w.id == self.shared['leader']:
@@ -353,6 +399,6 @@ class Economy:
                     else:
                         self.save_shared(mode='hold', reason='Turn-ins complete, but no account has 5 platinum to resume leading')
                         self.block(self.shared['reason'])
-        if self.shared['mode'] == 'farm':
+        if not manual and self.shared['mode'] == 'farm':
             w.change('Prepare', 'Turn-ins complete; resuming farm assembly')
         return True

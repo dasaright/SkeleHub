@@ -81,3 +81,6 @@ Version 0.2.1 build and public updater download succeeded in GitHub Actions. Ver
 
 
 Version 0.4.0 adds funding rotation and an opt-in seasonal economy state machine. Windows/static/simulated checks do not constitute a live quest or trader test. Turn-ins are disabled by default; UI settings explicitly enable the untested seasonal stage. The turn-in reference dialogs and location are preserved. Currency operations use bounded amounts, quoted prices, inventory acknowledgements and persistent stages; no real account credentials are added. UW readiness uses local visible party agents and live worker heartbeats, not run counters.
+
+
+Version 0.4.1 initializes and verifies the template once per worker/character initialization, without reloading on town returns. Death's Charge and Smoke Powder Defense must be confirmed before Signet. Manual per-account/selected currency tests persist separate state, coalesce repeated clicks, wait for an outpost, retain the current run/pause command and follow the existing valuation/quote/receipt checks. They never invoke the seasonal quest route.

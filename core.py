@@ -124,7 +124,7 @@ def save_config(path, config):
     atomic_text(path, json.dumps(config, indent=2))
 
 
-def write_control(path, mode=None, rendering=None, close_game=None, recover=False):
+def write_control(path, mode=None, rendering=None, close_game=None, recover=False, currency_request=None):
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
     if path.exists():
@@ -137,4 +137,6 @@ def write_control(path, mode=None, rendering=None, close_game=None, recover=Fals
         values['DisableRendering'] = int(rendering)
     if close_game is not None:
         values['CloseGame'] = int(close_game)
+    if currency_request is not None:
+        values['CurrencyRequest'] = currency_request
     write_ini(path, {'Control': values})

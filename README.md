@@ -1,4 +1,4 @@
-# Skelefarm Hub / Python SkeleBot — v0.4.0
+# Skelefarm Hub / Python SkeleBot — v0.4.1
 
 A Windows Python hub and Python farm controller for selected Guild Wars accounts. The desktop uses EncounterHub's PySide6 implementation pattern and the same charcoal/teal stylesheet, checkboxes, per-row controls, and saved column widths.
 
@@ -11,6 +11,12 @@ Those versions contain a Qt/Tk button API mismatch that prevents the update butt
 Funding rotation is enabled in Team Settings. At ToA, the current party leader withdraws only the amount needed to reach 20 carried platinum (or the remaining storage balance if smaller). With no storage gold, it continues leading while carrying at least 5 platinum. Below 5, it reports **Empty on Plat** and hands the leader role to a funded follower. The controlled funding rotation reforms the party under that account and verifies the resulting party leader. Ordinary party-order changes retain the complete party. After every account is exhausted, the team waits for turn-in mode.
 
 New columns show carried platinum, storage platinum, available Captured Skeletons, and funding state. Currency is tracked separately for each account. Session funding/turn-in state survives worker recovery.
+
+## Handle Currency test buttons
+
+Each account has **Handle Currency**, and the bottom toolbar has **Handle Currency Selected**. Launch accounts first. A request waits until the account is in an outpost, leaves the party, visits Embark Beach/Duuja, requests quotes and exercises the existing currency policy, then returns to the configured ToA district. It works with funding rotation and seasonal turn-ins disabled and preserves Pause. Teammates wait while the account is away. Repeated clicks are coalesced rather than restarting a pending purchase.
+
+This test never sends seasonal quest dialogs or consumes skeletons. It counts skeleton value toward the existing 800–900 platinum limits, so it can visit and obtain a quote without buying when the policy calls for no purchase. It does not force a purchase below the configured valuation band.
 
 ## Seasonal Turn In Mobs — implemented, not live tested
 
@@ -26,13 +32,13 @@ Source references: uploaded Skele turn-in script; GwAu3 item/merchant APIs; [Duu
 
 ## Death's Charge and party retention
 
-Each account must request Death's Charge and observe its recharge plus arrival within 300 units of the skeleton before continuing to Unseen Fury and Signet of Judgment. A request alone or a pre-existing cooldown does not count. Unaccepted casts retry up to three times; an unsuccessful approach returns to town rather than casting the damage sequence at range.
+Each account must request Death's Charge and observe its recharge plus arrival within 300 units of the skeleton before continuing immediately to Smoke Powder Defense (slot 3), Unseen Fury (slot 7), and Signet of Judgment (slot 4). A request alone or a pre-existing cooldown does not count. Smoke Powder Defense also waits for its own cast confirmation before Signet can proceed; town preparation waits for its recharge. Unaccepted casts retry up to three times; an unsuccessful approach returns to town rather than casting the damage sequence at range.
 
 A complete team is verified by connected character login numbers, independent of party order and leader. The current in-game party leader handles UW entry and run numbering; the configured leader remains the assembly anchor for split teams. A change of party leader hands entry off without leaving a complete party.
 
 ## Template and combat consistency
 
-`farm_build.py` is the single source for the current template `OwNS44PTTQ4OYhmE2kxkRQAA` and its seven occupied slots. Every return to town resets the template load budget and waits 2.5 seconds for map data to settle before verification. Status files include worker version, template, skill IDs and attempt count; logs record observed attributes and skills for load attempts.
+`farm_build.py` is the single source for the current template `OwNS44PTTQ4OYhmE2kxkRQAA` and its seven occupied slots. The template loads and verifies once when the character initializes, before the first town travel. Ordinary town returns check supplies and recharge without reloading or revalidating the template. Status files include worker version, template, skill IDs and attempt count; logs record observed attributes and skills for load attempts.
 
 Leader and followers share the same targeting, cast sequence, repeat-damage loop and normal attacks. Each receives a full combat timeout after the team readiness barrier clears, so the leader's earlier loading time does not shorten its fight.
 
@@ -126,7 +132,7 @@ Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe
 Keep these together:
 
 - `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.4.0.exe`
+- `Skelefarm-worker-0.4.1.exe`
 
 The Python worker embeds its versioned x86 bridge. Target PCs need neither Python nor AutoIt once built. Pin the hub executable to the taskbar.
 

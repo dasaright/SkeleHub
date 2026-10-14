@@ -250,3 +250,60 @@ class EconomyWorkflowTests(unittest.TestCase):
         self.tick()
         self.assertEqual(self.e.read_shared()['mode'], 'hold')
         self.assertEqual(self.worker.phase, 'EconomyHold')
+
+
+    def test_manual_currency_works_with_rotation_disabled_and_retains_pause(self):
+        self.e.enabled = False
+        self.worker.build_verified = True
+        self.worker.mode = 'pause'
+        self.worker.members = [self.worker.member]
+        self.e.request_currency('manual-one')
+        self.game.inv.update(storage_gold=920000, gold=0, captured=0, free=3, ecto=0)
+        self.game.target['distance'] = 100
+        original = self.game.call
+        def act(name, *args):
+            result = original(name, *args)
+            if name == 'travel':
+                self.game.s.update(map=args[0], region=args[1], district=args[2], language=args[3], instance=0)
+            elif name == 'npc_name':
+                return '43'
+            elif name == 'ecto_quote':
+                return '5000'
+            elif name == 'gold':
+                self.game.inv['storage_gold'] -= args[0]
+                self.game.inv['gold'] += args[0]
+            elif name == 'ecto_buy':
+                self.game.inv['gold'] -= args[0]
+                self.game.inv['ecto'] += 1
+            return result
+        self.game.call = act
+        for _ in range(90):
+            self.worker.s = dict(self.game.s)
+            self.tick()
+            if not self.e.currency_pending:
+                break
+        self.assertFalse(self.e.currency_pending)
+        self.assertEqual(self.game.inv['ecto'], 4)
+        self.assertEqual(total_value(self.game.inv), 900000)
+        self.assertEqual(self.worker.phase, 'Paused')
+        self.assertEqual(self.game.s['map'], 138)
+        self.assertFalse(any(c[0] == 'dialog' for c in self.game.calls))
+        self.e.request_currency('manual-one')
+        self.assertFalse(self.e.currency_pending)  # no replay of a consumed command
+        self.assertEqual(self.e.read_shared()['mode'], 'farm')
+
+    def test_currency_requests_coalesce_and_do_not_restart_pending_purchase(self):
+        self.e.request_currency('one')
+        self.e.currency.update(stage='buy_wait', before_gold=10000, before_ecto=0)
+        self.e.request_currency('two')
+        self.assertEqual(self.e.currency['stage'], 'buy_wait')
+        self.assertEqual(self.e.currency['seen'], 'two')
+        self.assertEqual(self.e.currency['generation'], 'one')
+
+    def test_currency_request_waits_for_outpost(self):
+        self.worker.build_verified = True
+        self.e.request_currency('outpost')
+        self.worker.s.update(map=72, instance=1)
+        self.assertFalse(self.e.tick())
+        self.assertFalse(any(c[0] in ('leave', 'travel') for c in self.game.calls))
+        self.assertTrue(self.e.currency_pending)

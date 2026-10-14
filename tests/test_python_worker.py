@@ -32,6 +32,10 @@ class FakeGame:
             if args[0] == 2:
                 self.s['cooldowns'] = '0,10000,0,0,0,0,0,0'
                 self.target['distance'] = 150
+            if args[0] == 3:
+                values = self.s['cooldowns'].split(',')
+                values[2] = '10000'
+                self.s['cooldowns'] = ','.join(values)
             return '0.3'
         return '1'
     def snapshot(self):
@@ -84,7 +88,7 @@ class PythonWorkerTests(unittest.TestCase):
         self.assertTrue(self.worker.select_character())
         self.assertEqual([c for c in self.game.calls if c[0] == 'key'],
                          [('key', 'N'), ('key', 'RIGHT'), ('key', 'ENTER')])
-        self.assertEqual(self.worker.phase, 'Travel')
+        self.assertEqual(self.worker.phase, 'Initialize')
         self.assertIn(('render', 1), self.game.calls)
         self.assertIn(('leave',), self.game.calls)
         self.assertTrue(self.worker.render_disabled)
@@ -177,7 +181,7 @@ class PythonWorkerTests(unittest.TestCase):
         self.worker.target = 42
         self.worker.tick()
         self.assertIn(('attack', 42), self.game.calls)
-        self.assertEqual(self.worker.step, 3)
+        self.assertEqual(self.worker.step, SEQUENCE.index(4))
 
     def test_uw_readiness_names_failed_peer_and_returns_after_grace(self):
         from core import write_ini
@@ -213,25 +217,45 @@ class PythonWorkerTests(unittest.TestCase):
             self.assertTrue(self.worker.all_loaded())
         self.assertEqual(self.worker.cycle, 3)
 
-    def test_return_to_town_resets_template_attempt_budget_and_waits_for_data(self):
-        from farm_build import BUILD
-        self.worker.build_attempts = 3
+    def test_return_to_town_does_not_reload_or_revalidate_initialized_template(self):
+        self.worker.build_attempts = 1
         self.worker.build_loaded = True
+        self.worker.build_verified = True
         self.game.s.update(map=72, instance=1)
         self.phase('Return')
-        self.game.s.update(map=138, instance=0, skills='0,0,0,0,0,0,0,0')
+        self.game.s.update(map=138, instance=0, skills='0,0,0,0,0,0,0,0', primary=0)
         self.worker.tick()
         self.assertEqual(self.worker.phase, 'Prepare')
-        self.assertEqual(self.worker.build_attempts, 0)
-        self.worker.tick()
-        self.assertFalse(any(c[0] == 'build' for c in self.game.calls))
-        self.game.s['skills'] = ','.join(map(str, SKILLS))
-        self.clock.advance(2.5)
-        self.worker.tick()
-        self.assertIn(('build', BUILD), self.game.calls)
         self.clock.advance(3)
         self.worker.tick()
         self.assertEqual(self.worker.phase, 'Party')
+        self.assertEqual(self.worker.build_attempts, 1)
+        self.assertFalse(any(c[0] == 'build' for c in self.game.calls))
+
+    def test_initialization_loads_template_before_first_town_travel(self):
+        from farm_build import BUILD
+        self.game.s['map'] = 55
+        self.phase('Initialize')
+        self.worker.tick()
+        self.assertIn(('build', BUILD), self.game.calls)
+        self.assertEqual(self.worker.phase, 'Initialize')
+        self.clock.advance(3)
+        self.worker.tick()
+        self.assertTrue(self.worker.build_verified)
+        self.assertEqual(self.worker.phase, 'Travel')
+        self.assertFalse(any(c[0] == 'travel' for c in self.game.calls))
+
+    def test_smoke_powder_defense_immediately_follows_confirmed_charge(self):
+        self.game.s.update(map=72, instance=1)
+        self.game.target['hp'] = .4
+        self.phase('Fight')
+        self.worker.combat_started = True
+        for _ in range(11):
+            self.worker.tick()
+            self.clock.advance(1)
+        casts = [c[1] for c in self.game.calls if c[0] == 'cast']
+        self.assertEqual(casts[:7], [1, 2, 3, 7, 4, 5, 6])
+        self.assertTrue(self.worker.charge_confirmed)
 
     def test_leader_and_follower_have_identical_cast_and_attack_loops(self):
         traces = []
@@ -396,6 +420,29 @@ class PythonWorkerTests(unittest.TestCase):
                   Login=22, Map=138, IsPartyLeader=1)})
         with patch('worker.process_alive', return_value=True):
             self.assertEqual(self.worker.current_entry_leader(), 'two')
+
+    def test_smoke_cooldown_is_not_skipped_before_signet(self):
+        self.phase('Fight')
+        self.worker.charge_confirmed = True
+        self.worker.step = SEQUENCE.index(3)
+        self.worker.s['cooldowns'] = '0,0,1000,0,0,0,0,0'
+        self.worker.cast_next(self.game.target)
+        self.assertEqual(self.worker.step, SEQUENCE.index(3))
+        self.assertFalse(any(c[0] == 'cast' for c in self.game.calls))
+        self.assertFalse(self.worker.smoke_confirmed)
+
+    def test_signet_waits_for_smoke_confirmation(self):
+        self.phase('Fight')
+        self.worker.charge_confirmed = True
+        self.worker.step = SEQUENCE.index(4)
+        self.worker.cast_next(self.game.target)
+        self.assertEqual(self.worker.step, SEQUENCE.index(3))
+        self.worker.cast_next(self.game.target)
+        self.clock.advance(1)
+        self.worker.s = dict(self.game.s)
+        self.worker.cast_next(self.game.target)
+        self.assertTrue(self.worker.smoke_confirmed)
+        self.assertEqual(self.worker.step, SEQUENCE.index(3) + 1)
 
     def test_combat_test_skips_mobstopper_and_free_slot_gates(self):
         self.phase('Prepare')

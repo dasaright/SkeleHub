@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import sys
 import subprocess
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import Qt, QTimer, QSignalBlocker
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -17,8 +18,8 @@ from core import DEFAULT, atomic_text, write_control, read_status
 from qt_style import STYLE
 from version import VERSION
 
-COLUMNS = ('select', 'character', 'team', 'role', 'status', 'render', 'pause', 'resume', 'stop', 'launch', 'runs', 'fails', 'kills', 'captured', 'plat', 'storage_plat', 'skeletons', 'funding', 'dat')
-CAPTIONS = ('Select', 'Character', 'Team', 'Role', 'Bot Status', 'Disable Rendering', 'Pause', 'Resume', 'Stop', 'Launch', 'Runs', 'Fails', 'Kills', 'Captured', 'Carried Plat', 'Storage Plat', 'Skeletons', 'Funding', 'GW Dat')
+COLUMNS = ('select', 'character', 'team', 'role', 'status', 'render', 'pause', 'resume', 'stop', 'launch', 'currency', 'runs', 'fails', 'kills', 'captured', 'plat', 'storage_plat', 'skeletons', 'funding', 'dat')
+CAPTIONS = ('Select', 'Character', 'Team', 'Role', 'Bot Status', 'Disable Rendering', 'Pause', 'Resume', 'Stop', 'Launch', 'Handle Currency', 'Runs', 'Fails', 'Kills', 'Captured', 'Carried Plat', 'Storage Plat', 'Skeletons', 'Funding', 'GW Dat')
 
 
 class Dialogs:
@@ -194,7 +195,7 @@ class Desktop(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setMinimumSectionSize(60)
         widths = self.config.get('column_widths', {})
-        defaults = (65, 200, 110, 80, 260, 145, 80, 80, 80, 80, 65, 65, 65, 80, 100, 100, 85, 140, 240)
+        defaults = (65, 200, 110, 80, 260, 145, 80, 80, 80, 80, 140, 65, 65, 65, 80, 100, 100, 85, 140, 240)
         self.loading_widths = True
         for i, key in enumerate(COLUMNS):
             header.resizeSection(i, int(widths.get(key, defaults[i])))
@@ -206,7 +207,7 @@ class Desktop(QMainWindow):
         outer.addLayout(footer)
         for label, callback in [('Launch Selected', self.launch), ('Pause Teams', lambda: self.command('pause')),
                                 ('Resume Teams', lambda: self.command('run')), ('Stop Teams', lambda: self.command('stop')),
-                                ('Open Logs', self.logs)]:
+                                ('Handle Currency Selected', self.handle_currency_selected), ('Open Logs', self.logs)]:
             button = QPushButton(label)
             if label == 'Launch Selected':
                 button.setProperty('primary', True)
@@ -253,8 +254,10 @@ class Desktop(QMainWindow):
             layout.addWidget(checkbox)
             self.grid.setCellWidget(row, COLUMNS.index(key), holder)
             self.widgets[account_id][key] = checkbox
-        for key in ('pause', 'resume', 'stop', 'launch'):
-            button = QPushButton(key.title())
+        for key in ('pause', 'resume', 'stop', 'launch', 'currency'):
+            button = QPushButton('Handle Currency' if key == 'currency' else key.title())
+            if key == 'currency':
+                button.setToolTip('Test the Embark ectoplasm handler using the existing 800–900 platinum valuation rules. Runs after returning to an outpost.')
             button.clicked.connect(lambda checked=False, action=key, aid=account_id: self.row_action(aid, action))
             self.grid.setCellWidget(row, COLUMNS.index(key), button)
 
@@ -275,7 +278,9 @@ class Desktop(QMainWindow):
         selected = self.checked
         self.checked = {account_id}
         try:
-            if action == 'stop':
+            if action == 'currency':
+                self.request_currency({account_id})
+            elif action == 'stop':
                 account = next(a for a in self.config['accounts'] if a['id'] == account_id)
                 session = self.sessions.get(account['team'])
                 if session and account_id in session.get('pids', {}):
@@ -287,6 +292,26 @@ class Desktop(QMainWindow):
                 self.command({'resume': 'run', 'pause': 'pause', 'stop': 'stop'}[action])
         finally:
             self.checked = selected
+
+    def handle_currency_selected(self):
+        self.request_currency(self.checked)
+
+    def request_currency(self, account_ids):
+        if self.update_busy:
+            self.notice.set('Finish the update operation before requesting currency tests.')
+            return
+        queued = 0
+        for account in self.config['accounts']:
+            if account['id'] not in account_ids:
+                continue
+            session = self.sessions.get(account['team'], {})
+            pid = session.get('pids', {}).get(account['id'])
+            if not pid or not engine.alive(pid):
+                continue
+            write_control(Path(session['dir']) / (account['id'] + '.command.ini'), currency_request=uuid.uuid4().hex)
+            queued += 1
+        self.notice.set(f'Handle Currency queued for {queued} account(s); waits for an outpost, visits Embark, applies existing buying rules, then returns to ToA.'
+                        if queued else 'Launch the selected accounts first, then press Handle Currency.')
 
     def set_rendering(self, account_id, disabled):
         account = next(a for a in self.config['accounts'] if a['id'] == account_id)
