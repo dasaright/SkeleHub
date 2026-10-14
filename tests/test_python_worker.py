@@ -187,6 +187,25 @@ class PythonWorkerTests(unittest.TestCase):
         self.assertEqual(self.worker.phase, 'Done')
         self.assertEqual(self.worker.kills, 0)
 
+    def test_loaded_uw_overrides_stale_town_phases(self):
+        for phase in ('Travel', 'Prepare', 'Party', 'Ready', 'Move', 'Entry'):
+            self.game.s.update(map=72, instance=1)
+            self.phase(phase)
+            self.worker.tick()
+            self.assertEqual(self.worker.phase, 'Fight', phase)
+            self.assertFalse(any(c[0] == 'travel' for c in self.game.calls))
+
+    def test_followers_resynchronize_cycle_while_waiting_in_uw(self):
+        from core import write_ini
+        self.worker.is_leader = False
+        self.worker.leader_id = 'two'
+        self.worker.members.append({'id': 'two', 'character': 'Leader'})
+        self.worker.cycle = 0
+        write_ini(self.path / 'two.status.ini', {'Worker': {'PID': 123, 'Map': 72, 'Cycle': 3, 'Phase': 'Fight'}})
+        with patch('worker.process_alive', return_value=True):
+            self.assertTrue(self.worker.all_loaded())
+        self.assertEqual(self.worker.cycle, 3)
+
     def test_combat_test_skips_mobstopper_and_free_slot_gates(self):
         self.phase('Prepare')
         self.worker.tick()

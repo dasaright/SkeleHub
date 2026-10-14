@@ -1,5 +1,6 @@
 """Skelefarm Hub: Windows desktop controller, Python 3.11+ / Tk."""
 import copy
+import configparser
 import ctypes
 import json
 import os
@@ -14,6 +15,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import uuid
 from accounts import read_characters, merge_accounts, validate_install
+from windows_recovery import dismiss_crash_dialogs
 from version import VERSION, worker_name
 from updater import check_release, stage_release, apply_and_restart
 from core import DEFAULT, atomic_text, write_ini, write_control, read_status, save_config, snapshot, validate
@@ -426,7 +428,73 @@ class Hub:
         if os.name == 'nt':
             os.startfile(str(DATA / 'sessions' if (DATA / 'sessions').exists() else DATA))
 
+    def recovery_tick(self):
+        if self.update_busy or getattr(self, 'force_close', False):
+            return
+        now = time.monotonic()
+        if now < getattr(self, '_recovery_next', 0):
+            return
+        self._recovery_next = now + 3
+        if not hasattr(self, '_recovery'):
+            self._recovery = {}
+        active = []
+        for account in self.config['accounts']:
+            session = self.sessions.get(account['team'], {})
+            if account['id'] not in session.get('pids', {}):
+                continue
+            directory = Path(session['dir'])
+            control = configparser.ConfigParser(interpolation=None)
+            control.read(directory / (account['id'] + '.command.ini'), encoding='utf-16')
+            status = read_status(directory / (account['id'] + '.status.ini'))
+            active.append((account, session, directory, control, status))
+        pids = {int(status.get('gamepid', 0)) for _, _, _, _, status in active} - {0}
+        dialogs = dismiss_crash_dialogs(pids, [a.get('gw_exe', '') for a, _, _, c, _ in active if c.get('Control', 'Mode', fallback='stop') != 'stop'])
+        for account, session, directory, control, status in active:
+            aid = account['id']
+            key = (str(directory), aid)
+            state = self._recovery.setdefault(key, {'attempts': 0, 'since': None, 'pending': False})
+            mode = control.get('Control', 'Mode', fallback='stop')
+            if mode != 'run' and not control.getboolean('Control', 'Recover', fallback=False):
+                state['pending'] = False
+                state['since'] = None
+                continue
+            worker_pid = session['pids'][aid]
+            game_pid = int(status.get('gamepid', 0))
+            crash = any(d['pid'] == game_pid or (not game_pid and os.path.normcase(d['path']) == os.path.normcase(account.get('gw_exe', ''))) for d in dialogs)
+            identity = int(status.get('launchpid', status.get('pid', 0))) == worker_pid
+            failed = crash or (identity and status.get('phase') == 'Error') or not alive(worker_pid)
+            if state['pending']:
+                if not alive(worker_pid) and not self.busy:
+                    write_control(directory / (aid + '.command.ini'), mode='run', close_game=False)
+                    self.launch_queue.append((account['team'], directory, account))
+                    state.update(pending=False, since=None)
+                    self.busy = True
+                    self.launch_next()
+                elif now - state['since'] > 45:
+                    state.update(pending=False, attempts=3)
+                    write_control(directory / (aid + '.command.ini'), mode='stop', close_game=True)
+                    self.notice.set(f"Recovery stopped for {account['character']}: old worker did not exit. Check logs.")
+                continue
+            if not failed:
+                state['since'] = None
+                continue
+            if state['since'] is None:
+                state['since'] = now
+            if not crash and now - state['since'] < 8:
+                continue
+            if state['attempts'] >= 3:
+                continue
+            state['attempts'] += 1
+            state.update(pending=True, since=now)
+            write_control(directory / (aid + '.command.ini'), mode='stop', close_game=True, recover=True)
+            self.notice.set(f"Restarting {account['character']} after failure ({state['attempts']}/3); crash reports use Don't Send.")
+
     def refresh(self):
+        try:
+            self.recovery_tick()
+        except (OSError, ValueError, configparser.Error) as exc:
+            if not self.update_busy:
+                self.notice.set(f'Recovery check delayed: {type(exc).__name__}; retrying.')
         existing = set(self.table.get_children())
         for a in self.config['accounts']:
             session = self.sessions.get(a['team'], {})

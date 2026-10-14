@@ -260,6 +260,8 @@ class Worker:
                 if launched_pid <= 0:
                     self.error('Account launch failed; check encryption seed and local game paths')
                     return True
+                self.s['game_pid'] = launched_pid
+                self.publish()
                 deadline = self.clock() + 180
             if not self.login_wait(3):
                 return False
@@ -290,6 +292,11 @@ class Worker:
         self.unavailable_since = None
         if str(self.s.get('character', '')).strip().casefold() != self.character.strip().casefold():
             self.error('Active character changed; relaunch the selected account')
+            return True
+        # A party map transition may skip the Ready/Party tick or briefly expose stale
+        # district/type data. The fully loaded map takes precedence over town states.
+        if self.s.get('map') == UW and self.s.get('instance') == 1 and self.phase in ('Travel', 'Prepare', 'Party', 'Ready', 'Move', 'Entry'):
+            self.start_fight()
             return True
         if self.mode == 'pause' and self.s.get('instance') == 0:
             if self.phase != 'Paused':
@@ -467,6 +474,10 @@ class Worker:
         self.change('Fight', 'Test: waiting for team to load UW' if self.test_mode else 'Finding Skeleton of Dhuum')
 
     def all_loaded(self):
+        if not self.is_leader:
+            leader = read_status(self.session / (self.leader_id + '.status.ini'))
+            if leader and int(leader.get('map', 0)) == UW and leader.get('phase') in ('Entry', 'Fight', 'Done', 'Return'):
+                self.cycle = int(leader.get('cycle', self.cycle))
         waiting = []
         peer_failed = False
         for member in self.members:
@@ -497,6 +508,7 @@ class Worker:
                 self.peer_error_since = None
             return False
         self.peer_error_since = None
+        self.state = 'Team loaded in UW; engaging Skeleton of Dhuum'
         return True
 
     def finish(self, success, message):

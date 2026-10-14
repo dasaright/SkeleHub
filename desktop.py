@@ -98,6 +98,7 @@ class Desktop(QMainWindow):
     check_updates = engine.Hub.check_updates
     update_now = engine.Hub.update_now
     stop_all_workers = engine.Hub.stop_all_workers
+    recovery_tick = engine.Hub.recovery_tick
     persist_sessions = engine.Hub.persist_sessions
     selected_teams = engine.Hub.selected_teams
     active = engine.Hub.active

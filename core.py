@@ -97,7 +97,7 @@ def snapshot(config, team, session_dir: Path):
         'Region': settings['region'], 'Language': settings['language'],
         'District': settings['district'], 'AssembleOnly': int(settings['assemble_only']),
         'TestMode': int(settings.get('test_mode', True)),
-        'Build': 'OwNS44PTceTQmE4O2kxkRQYh',
+        'Build': 'OwNS44PTTQ4ORQmE2kxkYhAA',
         'SkeletonModel1': 2392, 'SkeletonModel2': 2393, 'GrenthModel': 1995,
     }}
     for i, a in enumerate(members, 1):
@@ -120,7 +120,7 @@ def save_config(path, config):
     atomic_text(path, json.dumps(config, indent=2))
 
 
-def write_control(path, mode=None, rendering=None, close_game=None):
+def write_control(path, mode=None, rendering=None, close_game=None, recover=False):
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
     if path.exists():
@@ -128,6 +128,7 @@ def write_control(path, mode=None, rendering=None, close_game=None):
     values = dict(parser['Control']) if parser.has_section('Control') else {'Mode': 'run'}
     if mode is not None:
         values['Mode'] = mode
+        values['Recover'] = int(recover)
     if rendering is not None:
         values['DisableRendering'] = int(rendering)
     if close_game is not None:
