@@ -43,6 +43,14 @@ def alive(pid):
     return bool(ok and code.value == 259)
 
 
+def button_enabled(button, enabled):
+    """Support the Qt desktop and the archived Tk controller without toolkit leaks."""
+    if hasattr(button, 'setEnabled'):
+        button.setEnabled(enabled)
+    else:
+        button.configure(state='normal' if enabled else 'disabled')
+
+
 class Hub:
     def __init__(self, root):
         self.root = root
@@ -153,12 +161,12 @@ class Hub:
         if self.update_busy:
             return
         self.update_busy = True
-        self.check_button.configure(state='disabled')
-        self.update_button.configure(state='disabled')
+        button_enabled(self.check_button, False)
+        button_enabled(self.update_button, False)
         self.notice.set('Checking GitHub releases…')
         def done(release, error):
             self.update_busy = False
-            self.check_button.configure(state='normal')
+            button_enabled(self.check_button, True)
             if error:
                 self.update_release = None
                 if isinstance(error, urllib.error.HTTPError) and error.code == 404:
@@ -168,7 +176,7 @@ class Hub:
                 return
             self.update_release = release
             if release:
-                self.update_button.configure(state='normal')
+                button_enabled(self.update_button, True)
                 self.notice.set(f"Version {release['version']} is available. Update Now stops workers and restarts the hub; game clients stay open.")
             else:
                 self.notice.set(f'You are up to date ({VERSION}).')
@@ -180,8 +188,8 @@ class Hub:
         if self.busy:
             return messagebox.showinfo('Launching', 'Wait for the launch queue to finish before updating.')
         self.update_busy = True
-        self.update_button.configure(state='disabled')
-        self.check_button.configure(state='disabled')
+        button_enabled(self.update_button, False)
+        button_enabled(self.check_button, False)
         self.notice.set('Preparing update download…')
         release = dict(self.update_release)
         updates = queue.SimpleQueue()
@@ -196,8 +204,8 @@ class Hub:
         self.root.after(100, show_progress)
         def failed(message):
             self.update_busy = False
-            self.check_button.configure(state='normal')
-            self.update_button.configure(state='normal')
+            button_enabled(self.check_button, True)
+            button_enabled(self.update_button, True)
             self.notice.set(message)
         def helper_ready(result, error):
             if error:

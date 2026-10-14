@@ -187,7 +187,7 @@ try {
         Replace-WithRetry $source $target
     }
     Start-Process -FilePath (Join-Path $InstallDir 'Skelefarm Hub.exe') -WorkingDirectory $InstallDir -ErrorAction Stop
-    'Update applied; hub restarted. Active workers were left running.' | Set-Content -LiteralPath $log
+    'Update applied; hub restarted.' | Set-Content -LiteralPath $log
     @{ success = $true; message = 'Update applied; hub restarted.'; log = $log } | ConvertTo-Json | Set-Content -LiteralPath $result -Encoding UTF8
 } catch {
     $failure = $_
