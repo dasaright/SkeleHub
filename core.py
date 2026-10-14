@@ -21,7 +21,16 @@ def atomic_text(path: Path, text: str, encoding='utf-8'):
     temp = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
     try:
         temp.write_text(text, encoding=encoding)
-        os.replace(temp, path)
+        # Windows readers (hub and peers) can briefly hold a file without delete sharing.
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                os.replace(temp, path)
+                break
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.025)
     finally:
         temp.unlink(missing_ok=True)
 

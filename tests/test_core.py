@@ -105,3 +105,24 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AtomicSharingTests(unittest.TestCase):
+    def test_status_replace_retries_windows_sharing_lock(self):
+        from unittest.mock import patch
+        from core import atomic_text
+        import os
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'status.ini'
+            replace = os.replace
+            attempts = []
+            def sharing_then_replace(source, dest):
+                attempts.append(True)
+                if len(attempts) < 3:
+                    raise PermissionError('sharing violation')
+                return replace(source, dest)
+            with patch('core.os.replace', side_effect=sharing_then_replace), patch('core.time.sleep'):
+                atomic_text(target, 'complete status')
+            self.assertEqual(target.read_text(), 'complete status')
+            self.assertEqual(len(attempts), 3)
+            self.assertEqual(list(Path(directory).glob('*.tmp')), [])

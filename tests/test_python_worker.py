@@ -173,6 +173,20 @@ class PythonWorkerTests(unittest.TestCase):
         self.assertIn(('attack', 42), self.game.calls)
         self.assertEqual(self.worker.step, 3)
 
+    def test_uw_readiness_names_failed_peer_and_returns_after_grace(self):
+        from core import write_ini
+        self.worker.members.append({'id': 'two', 'character': 'Failed Leader'})
+        self.game.s.update(map=72, instance=1)
+        self.phase('Fight')
+        write_ini(self.path / 'two.status.ini', {'Worker': {'PID': 123, 'Map': 72, 'Cycle': 0, 'Phase': 'Error'}})
+        with patch('worker.process_alive', return_value=True):
+            self.worker.tick()
+            self.assertIn('Failed Leader: needs attention', self.worker.state)
+            self.clock.advance(10)
+            self.worker.tick()
+        self.assertEqual(self.worker.phase, 'Done')
+        self.assertEqual(self.worker.kills, 0)
+
     def test_combat_test_skips_mobstopper_and_free_slot_gates(self):
         self.phase('Prepare')
         self.worker.tick()

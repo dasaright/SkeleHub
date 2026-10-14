@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import sys
 import time
+import traceback
 from core import write_ini, read_status, write_control
 from game_bridge import GameBridge, fields
 
@@ -85,6 +86,7 @@ class Worker:
         self.waypoint = None
         self.kill_verified = False
         self.combat_started = False
+        self.peer_error_since = None
 
     def log(self, text):
         if self.log_path.exists() and self.log_path.stat().st_size > 5 * 1024 * 1024:
@@ -465,7 +467,37 @@ class Worker:
         self.change('Fight', 'Test: waiting for team to load UW' if self.test_mode else 'Finding Skeleton of Dhuum')
 
     def all_loaded(self):
-        return all(peer and int(peer.get('map', 0)) == UW and int(peer.get('cycle', -1)) == self.cycle and peer.get('phase') in ('Fight', 'Done', 'Return') for _, peer in self.peers())
+        waiting = []
+        peer_failed = False
+        for member in self.members:
+            if member['id'] == self.id:
+                continue
+            peer = read_status(self.session / (member['id'] + '.status.ini'))
+            name = member['character']
+            if not peer or not process_alive(peer.get('pid')):
+                waiting.append(name + ': worker unavailable')
+                peer_failed = True
+            elif peer.get('phase') in ('Error', 'Stopped'):
+                waiting.append(name + ': needs attention')
+                peer_failed = True
+            elif int(peer.get('map', 0)) != UW:
+                waiting.append(name + ': loading UW')
+            elif peer.get('phase') not in ('Fight', 'Done', 'Return'):
+                waiting.append(name + ': ' + peer.get('phase', 'starting'))
+            elif int(peer.get('cycle', -1)) != self.cycle:
+                waiting.append(name + ': synchronizing run')
+        if waiting:
+            self.state = 'Waiting for team — ' + '; '.join(waiting)
+            if peer_failed:
+                if self.peer_error_since is None:
+                    self.peer_error_since = self.clock()
+                elif self.clock() - self.peer_error_since >= 10:
+                    self.finish(False, 'Team worker unavailable; returning to town')
+            else:
+                self.peer_error_since = None
+            return False
+        self.peer_error_since = None
+        return True
 
     def finish(self, success, message):
         self.runs += 1
@@ -591,7 +623,11 @@ class Worker:
                     last_publish = self.clock()
                 time.sleep(.1)
         except Exception as exc:
-            self.error(f'Game bridge failed: {type(exc).__name__}')
+            self.log(traceback.format_exc())
+            if isinstance(exc, PermissionError):
+                self.error('Session file access denied after retries; see worker log for the affected file')
+            else:
+                self.error(f'Worker failed: {type(exc).__name__}; see worker log for details')
             while self.hub_alive() and read_ini(self.command_path).get('Control', 'Mode', fallback='stop') != 'stop':
                 self.publish()
                 time.sleep(1)
