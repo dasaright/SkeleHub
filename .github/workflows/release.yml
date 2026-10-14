@@ -1,0 +1,42 @@
+name: Windows release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Verify version tag
+        shell: pwsh
+        run: |
+          $version = (python -c 'from version import VERSION; print(VERSION)').Trim()
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag must match VERSION in version.py' }
+      - name: Install AutoIt
+        shell: pwsh
+        run: |
+          choco install autoit --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'AutoIt installation failed' }
+      - name: Check and build
+        shell: pwsh
+        run: .\Build-Windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SkeleHub-Windows
+          path: SkeleHub-*-windows.zip
+          if-no-files-found: error
+      - name: Publish versioned release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $asset = (Get-ChildItem SkeleHub-*-windows.zip | Select-Object -First 1).FullName
+          gh release create $env:GITHUB_REF_NAME $asset --title "SkeleHub $env:GITHUB_REF_NAME" --notes "Windows test build. See README for setup and supervised testing."
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

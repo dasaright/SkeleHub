@@ -8,3 +8,11 @@ sessions.json
 *.log
 *.status.ini
 *.command.ini
+characters.ini
+**/characters.ini
+*.dat
+*.DAT
+SkeleHub-*-windows.zip
+private/
+*.backup
+*.new
