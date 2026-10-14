@@ -29,6 +29,9 @@ class FakeGame:
         if name == 'nearest':
             return '42'
         if name == 'cast':
+            if args[0] == 2:
+                self.s['cooldowns'] = '0,10000,0,0,0,0,0,0'
+                self.target['distance'] = 150
             return '0.3'
         return '1'
     def snapshot(self):
@@ -201,6 +204,7 @@ class PythonWorkerTests(unittest.TestCase):
         from core import write_ini
         self.worker.is_leader = False
         self.worker.leader_id = 'two'
+        self.worker.entry_leader_id = 'two'
         self.worker.members.append({'id': 'two', 'character': 'Leader'})
         self.worker.cycle = 0
         write_ini(self.path / 'two.status.ini', {'Worker': {'PID': 123, 'Map': 72, 'Cycle': 3, 'Phase': 'Fight'}})
@@ -233,12 +237,13 @@ class PythonWorkerTests(unittest.TestCase):
         for leader in (True, False):
             self.worker.is_leader = leader
             self.game.calls.clear()
+            self.game.s['cooldowns'] = '0,0,0,0,0,0,0,0'
             self.game.s.update(map=72, instance=1)
             self.game.target['hp'] = .4
             self.worker.s = dict(self.game.s)
             self.worker.start_fight()
             self.worker.all_loaded = lambda: True
-            for _ in range(9):
+            for _ in range(10):
                 self.worker.tick()
                 self.clock.advance(1)
             traces.append([c for c in self.game.calls if c[0] in ('cast', 'attack', 'target')])
@@ -275,6 +280,88 @@ class PythonWorkerTests(unittest.TestCase):
         self.assertEqual(dict((take(width), take(4)) for _ in range(count)), {14: 12, 31: 12})
         width = take(4) + 8
         self.assertEqual([take(width) for _ in range(8)], SKILLS)
+
+    def test_charge_requires_own_request_and_recharge_before_signet(self):
+        self.phase('Fight')
+        self.worker.target = 42
+        self.worker.step = 1
+        self.worker.cast_next(self.game.target)
+        self.assertFalse(self.worker.charge_confirmed)
+        self.assertEqual(self.worker.step, 1)
+        self.clock.advance(1)
+        self.worker.s = dict(self.game.s)
+        self.worker.cast_next(self.game.target)
+        self.assertTrue(self.worker.charge_confirmed)
+        self.assertEqual(self.worker.step, 2)
+        self.assertNotIn(('cast', 4, 42), self.game.calls)
+
+    def test_preexisting_charge_cooldown_never_counts_as_use(self):
+        self.game.s['cooldowns'] = '0,1000,0,0,0,0,0,0'
+        self.phase('Fight')
+        self.worker.step = 1
+        self.worker.cast_next(self.game.target)
+        self.assertFalse(self.worker.charge_confirmed)
+        self.assertFalse(any(c[0] == 'cast' for c in self.game.calls))
+        self.assertEqual(self.worker.step, 1)
+
+    def test_unaccepted_charge_retries_without_casting_signet(self):
+        self.phase('Fight')
+        self.worker.step = 1
+        self.worker.target = 42
+        for _ in range(4):
+            self.worker.s['cooldowns'] = '0,0,0,0,0,0,0,0'
+            self.worker.cast_next(self.game.target)
+            self.clock.advance(4)
+        self.assertEqual(self.worker.phase, 'Done')
+        self.assertEqual(self.game.calls.count(('cast', 2, 42)), 3)
+        self.assertNotIn(('cast', 4, 42), self.game.calls)
+
+    def test_charge_recharge_without_arrival_blocks_signet(self):
+        self.phase('Fight')
+        self.worker.step = 1
+        self.worker.cast_next(self.game.target)
+        self.worker.s = dict(self.game.s)
+        self.game.target['distance'] = 900
+        self.clock.advance(6)
+        self.worker.cast_next(self.game.target)
+        self.assertFalse(self.worker.charge_confirmed)
+        self.assertEqual(self.worker.phase, 'Done')
+
+    def test_signet_guard_returns_to_charge_if_not_confirmed(self):
+        self.phase('Fight')
+        self.worker.step = 3
+        self.worker.cast_next(self.game.target)
+        self.assertEqual(self.worker.step, 1)
+        self.assertFalse(any(c[0] == 'cast' for c in self.game.calls))
+
+    def retained_party(self):
+        from core import write_ini
+        self.worker.members.append({'id': 'two', 'character': 'Beta'})
+        self.game.s.update(leader=22, roster='22:1,11:1')
+        write_ini(self.path / 'two.status.ini', {'Worker': dict(PID=123, Phase='Ready', Mode='run',
+                  Map=138, Region=-2, Language=0, District=1, Login=22, Party=3)})
+
+    def test_complete_party_retains_order_and_current_in_game_leader(self):
+        self.retained_party()
+        self.phase('Party')
+        with patch('worker.process_alive', return_value=True):
+            self.worker.tick()
+        self.assertEqual(self.worker.phase, 'Ready')
+        self.assertEqual(self.worker.entry_leader_id, 'two')
+        self.assertNotIn(('leave',), self.game.calls)
+        self.assertFalse(any(c[0] in ('invite', 'accept') for c in self.game.calls))
+
+    def test_current_party_leader_can_enter_without_configured_leader_role(self):
+        self.retained_party()
+        self.worker.is_leader = False
+        self.worker.leader_id = 'two'
+        self.game.s['leader'] = 11
+        self.phase('Party')
+        with patch('worker.process_alive', return_value=True):
+            self.worker.tick()
+        self.assertEqual(self.worker.phase, 'Move')
+        self.assertEqual(self.worker.entry_leader_id, self.worker.id)
+        self.assertNotIn(('leave',), self.game.calls)
 
     def test_combat_test_skips_mobstopper_and_free_slot_gates(self):
         self.phase('Prepare')
@@ -333,15 +420,12 @@ class PythonWorkerTests(unittest.TestCase):
         self.worker.tick()
         self.assertEqual(self.worker.phase, 'Prepare')
 
-    def test_configured_leader_regroups_if_in_game_leadership_changed(self):
+    def test_configured_leader_does_not_leave_for_party_order_change(self):
         self.game.s['leader'] = 999
         self.phase('Party')
         self.worker.tick()
-        self.assertIn(('leave',), self.game.calls)
-        self.game.s['leader'] = 11
-        self.clock.advance(3)
-        self.worker.tick()
-        self.assertEqual(self.worker.phase, 'Move')
+        self.assertNotIn(('leave',), self.game.calls)
+
 
     def test_test_mode_always_kneels_before_entry_dialog(self):
         self.phase('Entry')

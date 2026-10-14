@@ -1,4 +1,4 @@
-# Skelefarm Hub / Python SkeleBot — v0.3.9
+# Skelefarm Hub / Python SkeleBot — v0.3.10
 
 A Windows Python hub and Python farm controller for selected Guild Wars accounts. The desktop uses EncounterHub's PySide6 implementation pattern and the same charcoal/teal stylesheet, checkboxes, per-row controls, and saved column widths.
 
@@ -6,9 +6,15 @@ A Windows Python hub and Python farm controller for selected Guild Wars accounts
 
 Those versions contain a Qt/Tk button API mismatch that prevents the update buttons from working. Close the hub, download the v0.3.8 Windows ZIP from GitHub Releases, extract it into the existing installation folder replacing the hub executable, and start the replaced executable. Local settings and accounts remain under LOCALAPPDATA and are preserved. Version 0.3.8 fixes both update buttons; subsequent updates can use the hub. Tests now click the actual Qt buttons through checking, download failure/retry, and helper handoff.
 
+## Death's Charge and party retention
+
+Each account must request Death's Charge and observe its recharge plus arrival within 300 units of the skeleton before continuing to Unseen Fury and Signet of Judgment. A request alone or a pre-existing cooldown does not count. Unaccepted casts retry up to three times; an unsuccessful approach returns to town rather than casting the damage sequence at range.
+
+A complete team is verified by connected character login numbers, independent of party order and leader. The current in-game party leader handles UW entry and run numbering; the configured leader remains the assembly anchor for split teams. A change of party leader hands entry off without leaving a complete party.
+
 ## Template and combat consistency
 
-`farm_build.py` is the single source for the current template `OwNS44PTTQ4ORQmE2kxkYhAA` and its seven occupied slots. Every return to town resets the template load budget and waits 2.5 seconds for map data to settle before verification. Status files include worker version, template, skill IDs and attempt count; logs record observed attributes and skills for load attempts.
+`farm_build.py` is the single source for the current template `OwNS44PTTQ4OYhmE2kxkRQAA` and its seven occupied slots. Every return to town resets the template load budget and waits 2.5 seconds for map data to settle before verification. Status files include worker version, template, skill IDs and attempt count; logs record observed attributes and skills for load attempts.
 
 Leader and followers share the same targeting, cast sequence, repeat-damage loop and normal attacks. Each receives a full combat timeout after the team readiness barrier clears, so the leader's earlier loading time does not shorten its fight.
 
@@ -24,7 +30,7 @@ Session writes retry transient Windows sharing locks for up to two seconds. Work
 
 ## Startup and shutdown
 
-Workers stop when the hub closes, including an update restart. New workers also monitor the hub PID so an unexpected hub exit stops them. After loading the configured character, each worker enables Disable Rendering, leaves any previous party, and confirms party departure before travel and assembly. Rendering can then be toggled manually. The template is `OwNS44PTTQ4ORQmE2kxkYhAA`; slot 8 is empty and is skipped during combat.
+Workers stop when the hub closes, including an update restart. New workers also monitor the hub PID so an unexpected hub exit stops them. After loading the configured character, each worker enables Disable Rendering, leaves any previous party, and confirms party departure before travel and assembly. Rendering can then be toggled manually. The template is `OwNS44PTTQ4OYhmE2kxkRQAA`; slot 8 is empty and is skipped during combat.
 
 ## Character selection and build checks
 
@@ -38,11 +44,11 @@ Combat test is enabled automatically once when moving to this version. It preser
 
 1. Selected characters travel to the same Temple of the Ages town, region, language, and district.
 2. The configured leader forms the exact selected team. Followers accept that leader.
-3. The leader runs to the Grenth statue, kneels, and requests UW entry.
+3. The current in-game party leader runs to the Grenth statue, kneels, and requests UW entry.
 4. Accounts wait for the team to load UW, move to the Skeleton of Dhuum, and kill it using the original build/skill sequence plus normal attacks.
 5. Each worker verifies the skeleton is dead, waits **two seconds**, then resigns.
 6. **Every account repeatedly requests return to town**, regardless of current in-game leadership, until it confirms Temple of the Ages is loaded as an outpost.
-7. Accounts regroup under the designated leader, which attempts the next UW entry.
+7. Accounts retain the complete team regardless of party order; the current in-game party leader attempts the next UW entry.
 
 Combat test ignores Everlasting Mobstopper and inventory-space requirements. It never invokes capture or counts kills as captured skeletons. The leader still needs 1,000 gold per entry and working Grenth access. A vanished target alone does not count as a confirmed death. Timeouts produce an attention state.
 
@@ -102,7 +108,7 @@ Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe
 Keep these together:
 
 - `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.3.9.exe`
+- `Skelefarm-worker-0.3.10.exe`
 
 The Python worker embeds its versioned x86 bridge. Target PCs need neither Python nor AutoIt once built. Pin the hub executable to the taskbar.
 

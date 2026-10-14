@@ -76,6 +76,10 @@ class Worker:
         self.build_attempts = 0
         self.prepare_ready_at = 0
         self.combat_started_at = None
+        self.entry_leader_id = self.leader_id
+        self.charge_confirmed = False
+        self.charge_requested_at = None
+        self.charge_attempts = 0
         self.target = 0
         self.step = 0
         self.cast_until = 0
@@ -123,7 +127,8 @@ class Worker:
         fields = {'Stamp': f'{datetime.now():%Y/%m/%d %H:%M:%S}', 'PID': os.getpid(),
                   'LaunchPID': os.getppid() if getattr(sys, 'frozen', False) else os.getpid(),
                   'WorkerVersion': VERSION, 'BuildTemplate': BUILD, 'BuildSkills': ','.join(map(str, SKILLS)),
-                  'BuildAttempts': self.build_attempts,
+                  'BuildAttempts': self.build_attempts, 'EntryLeader': self.entry_leader_id,
+                  'ChargeConfirmed': int(self.charge_confirmed), 'ChargeAttempts': self.charge_attempts,
                   'Character': self.character, 'Phase': self.phase, 'State': self.state, 'Mode': self.mode,
                   'Cycle': self.cycle, 'TestMode': int(self.test_mode), 'Kills': self.kills,
                   'KillVerified': int(self.kill_verified), 'Target': self.target,
@@ -154,7 +159,6 @@ class Worker:
         if len(present) != len(self.members) or self.s.get('heroes') or self.s.get('henchmen'):
             return False
         expected = {int(self.s.get('login', 0))}
-        leader_login = self.s.get('login') if self.is_leader else None
         for account_id, peer in self.peers():
             if not peer or peer.get('mode') != 'run' or int(peer.get('map', 0)) != TOA:
                 return False
@@ -162,9 +166,15 @@ class Worker:
                 return False
             login = int(peer.get('login', 0))
             expected.add(login)
-            if account_id == self.leader_id:
-                leader_login = login
-        return 0 not in expected and expected == present and self.s.get('leader') == leader_login
+        return 0 not in expected and expected == present
+
+    def current_entry_leader(self):
+        if self.s.get('leader') == self.s.get('login'):
+            return self.id
+        for account_id, peer in self.peers():
+            if peer and int(peer.get('login', 0)) == self.s.get('leader'):
+                return account_id
+        return None
 
     def all_ready(self):
         return self.exact_party() and all(peer and peer.get('phase') == 'Ready' for _, peer in self.peers())
@@ -387,7 +397,8 @@ class Worker:
         if self.exact_party():
             if self.phase != 'Ready':
                 self.change('Ready', 'Team ready')
-            if self.is_leader and self.all_ready():
+            self.entry_leader_id = self.current_entry_leader() or self.entry_leader_id
+            if self.entry_leader_id == self.id and self.all_ready():
                 if self.assemble_only:
                     self.state = 'Assembly verified — assembly-only mode'
                     return
@@ -409,17 +420,14 @@ class Worker:
             return
         if not self.due(3):
             return
-        if self.is_leader:
-            if self.s.get('leader') != self.s.get('login'):
-                self.game.call('leave')
-                return
+        if self.s.get('leader') == self.s.get('login'):
             for _, peer in self.peers():
                 if peer and int(peer.get('map', 0)) == TOA and all(int(peer.get(k, -999)) == v for k, v in self.destination.items()):
                     login = int(peer.get('login', 0))
                     if login and f'{login}:1' not in str(self.s.get('roster', '')).split(','):
                         self.game.call('invite', login)
         else:
-            leader = self.peer(self.leader_id)
+            leader = self.peer(self.leader_id) if not self.is_leader else None
             if leader and int(leader.get('map', 0)) == TOA and all(int(leader.get(k, -999)) == v for k, v in self.destination.items()):
                 party = int(leader.get('party', 0))
                 if party and self.s.get('party') != party:
@@ -429,6 +437,9 @@ class Worker:
                         self.game.call('accept', party)
 
     def move(self):
+        if self.current_entry_leader() != self.id:
+            self.change('Party', 'Party leader changed; preserving team and handing off entry')
+            return
         if not self.all_ready():
             self.change('Party', 'A team member is no longer ready')
             return
@@ -448,6 +459,9 @@ class Worker:
     def entry(self):
         if self.s.get('map') == UW and self.s.get('instance') == 1:
             self.start_fight()
+            return
+        if self.current_entry_leader() != self.id:
+            self.change('Party', 'Party leader changed; preserving team and handing off entry')
             return
         if self.elapsed() > 45:
             self.error('UW entry timed out; check Grenth/access and carried gold')
@@ -472,12 +486,18 @@ class Worker:
         self.game.call('dialog', 0x86)
 
     def start_fight(self):
-        if not self.is_leader:
-            leader = self.peer(self.leader_id)
+        actual_leader = self.current_entry_leader()
+        if actual_leader:
+            self.entry_leader_id = actual_leader
+        if self.id != self.entry_leader_id:
+            leader = self.peer(self.entry_leader_id)
             if leader:
                 self.cycle = int(leader.get('cycle', 0))
         self.target, self.step, self.cast_until = 0, 0, 0
         self.kill_verified = False
+        self.charge_confirmed = False
+        self.charge_requested_at = None
+        self.charge_attempts = 0
         self.combat_started = False
         self.combat_started_at = None
         self.peer_error_since = None
@@ -485,8 +505,8 @@ class Worker:
         self.change('Fight', 'Test: waiting for team to load UW' if self.test_mode else 'Finding Skeleton of Dhuum')
 
     def all_loaded(self):
-        if not self.is_leader:
-            leader = read_status(self.session / (self.leader_id + '.status.ini'))
+        if self.id != self.entry_leader_id:
+            leader = read_status(self.session / (self.entry_leader_id + '.status.ini'))
             if leader and int(leader.get('map', 0)) == UW and leader.get('phase') in ('Entry', 'Fight', 'Done', 'Return'):
                 self.cycle = int(leader.get('cycle', self.cycle))
         waiting = []
@@ -541,10 +561,42 @@ class Worker:
         if self.clock() < self.cast_until or self.s.get('casting') or self.step >= len(SEQUENCE):
             return
         slot = SEQUENCE[self.step]
+        if slot >= 3 and not self.charge_confirmed:
+            self.step = SEQUENCE.index(2)
+            return
+        if slot == 2:
+            cooldown = self.cooldowns().get(2, 0)
+            if self.charge_requested_at is not None:
+                if cooldown > 0 and agent.get('distance', 99999) <= 300:
+                    self.charge_confirmed = True
+                    self.step += 1
+                    self.state = "Death's Charge confirmed; continuing combat"
+                    self.log("Death's Charge confirmed by recharge and target proximity")
+                    return
+                wait = self.clock() - self.charge_requested_at
+                self.state = "Waiting to confirm Death's Charge before Signet of Judgment"
+                if wait < (5 if cooldown else 3):
+                    return
+                if cooldown:
+                    self.finish(False, "Death's Charge did not reach skeleton; returning to town")
+                    return
+                self.charge_requested_at = None
+            if cooldown > 0:
+                self.state = "Waiting for Death's Charge to recharge; damage sequence blocked"
+                return
+            if self.charge_attempts >= 3:
+                self.finish(False, "Death's Charge failed three attempts; returning to town")
+                return
+            self.charge_attempts += 1
+            self.charge_requested_at = self.clock()
+            self.game.call('target', self.target)
+            delay = float(self.game.call('cast', 2, self.target))
+            self.cast_until = self.clock() + max(.3, delay)
+            return
         if (slot == 6 and agent.get('hp', 1) >= .49) or self.cooldowns().get(slot, 0) > 0:
             self.step += 1
             return
-        target = self.target if slot in (2, 4, 5, 6) else -2
+        target = self.target if slot in (4, 5, 6) else -2
         delay = float(self.game.call('cast', slot, target))
         self.cast_until = self.clock() + max(.3, delay)
         self.step += 1
