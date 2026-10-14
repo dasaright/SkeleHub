@@ -122,11 +122,13 @@ def stage_release(release, data_dir, progress=None):
 def apply_and_restart(staging, install_dir, pid):
     if os.name != 'nt':
         raise RuntimeError('Updates require Windows.')
-    # Old workers use versioned filenames, so they remain untouched and running.
+    # The helper and restarted app must be independent of this frozen process.
+    environment = {k: v for k, v in os.environ.items() if not k.startswith('_PYI_') and k != '_MEIPASS2'}
+    environment['PYINSTALLER_RESET_ENVIRONMENT'] = '1'
     process = subprocess.Popen(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                       str(staging / 'apply.ps1'), '-HubPid', str(pid),
                       '-InstallDir', str(install_dir), '-StagingDir', str(staging)],
-                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), env=environment)
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         if (staging / 'ready').is_file():
@@ -186,7 +188,13 @@ try {
         $installed += $target
         Replace-WithRetry $source $target
     }
+    # Do not inherit the previous onefile parent's PID or extraction directory.
+    Get-ChildItem Env: | Where-Object { $_.Name -like '_PYI_*' -or $_.Name -eq '_MEIPASS2' } | ForEach-Object { Remove-Item ('Env:' + $_.Name) }
+    $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
     Start-Process -FilePath (Join-Path $InstallDir 'Skelefarm Hub.exe') -WorkingDirectory $InstallDir -ErrorAction Stop
+    # Retire only recognized release executables; never delete user files or active workers.
+    $activePaths = @(Get-Process -ErrorAction SilentlyContinue | ForEach-Object { try { $_.Path } catch {} })
+    Get-ChildItem -LiteralPath $InstallDir -File | Where-Object { ($_.Name -match '^Skelefarm-worker-\d+\.\d+\.\d+\.exe$' -or $_.Name -match '^GwAu3-bridge-\d+\.\d+\.\d+\.exe$') -and $_.Name -notin $names -and $_.FullName -notin $activePaths } | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
     'Update applied; hub restarted.' | Set-Content -LiteralPath $log
     @{ success = $true; message = 'Update applied; hub restarted.'; log = $log } | ConvertTo-Json | Set-Content -LiteralPath $result -Encoding UTF8
 } catch {
@@ -205,6 +213,8 @@ try {
     @{ success = $false; message = 'Update failed; rollback attempted.'; log = $log } | ConvertTo-Json | Set-Content -LiteralPath $result -Encoding UTF8
     $old = Join-Path $InstallDir 'Skelefarm Hub.exe'
     if ($hubExited -and (Test-Path -LiteralPath $old -PathType Leaf)) {
+        Get-ChildItem Env: | Where-Object { $_.Name -like '_PYI_*' -or $_.Name -eq '_MEIPASS2' } | ForEach-Object { Remove-Item ('Env:' + $_.Name) }
+        $env:PYINSTALLER_RESET_ENVIRONMENT = '1'
         Start-Process -FilePath $old -WorkingDirectory $InstallDir -ErrorAction SilentlyContinue
     }
 }

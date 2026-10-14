@@ -1,4 +1,4 @@
-# Skelefarm Hub / Python SkeleBot — v0.4.4
+# Skelefarm Hub / Python SkeleBot — v0.4.5
 
 A Windows Python hub and Python farm controller for selected Guild Wars accounts. The desktop uses EncounterHub's PySide6 implementation pattern and the same charcoal/teal stylesheet, checkboxes, per-row controls, and saved column widths.
 
@@ -107,7 +107,7 @@ Original A/Mo template: `OwNS44PTceTQmE4O2kxkRQYh`. Slots: Shadow Sanctuary (Lux
 ## Accounts, executables and Dat files
 
 1. Import your local **characters.ini**.
-2. Use **Add Account** with Character Name, Guild Wars Executable, Account Email and Account Password. Gw.dat is discovered beside Gw.exe. Editing preserves a saved password when the password input is blank. Credentials are saved to the imported characters config, or `%LOCALAPPDATA%\SkelefarmHub\characters.ini` for new setups; passwords entered here use Windows user-bound DPAPI. Existing Encounter `{SEC}` passwords remain supported. Never publish your characters config.
+2. Use **Add Account** with Character Name, Guild Wars Executable, Account Email and Account Password. Gw.dat is discovered beside Gw.exe. Editing preserves a saved password when the password input is blank. Credentials are saved to the imported characters config, or `Files\characters.ini` for new setups; passwords entered here use Windows user-bound DPAPI. Existing Encounter `{SEC}` passwords remain supported. Never publish your characters config.
 3. Choose `Gw.exe` and `Gw.dat` from the same installation folder. Browsing to a Dat selects the sibling executable when present. Large Dat files are never copied or relinked.
 4. Assign teams using the Team dropdown in each row. It includes **Create Team** and **Delete Team**; deleting a team moves its accounts to Team 1. Team 1 cannot be deleted ("Must have at least one team"). Stop affected teams before changing membership. Launch All starts every account; Launch Selected starts only checked rows. Role stays blank until a funded leader is selected after login. The first account in row order with at least 5 platinum across inventory and storage becomes leader. If none qualify: "You need to fund at least one member of this team with plat". Fund an account and restart that team.
 
@@ -115,7 +115,7 @@ New accounts use **Direct** mode, which reads the local INI's `Email`, `Pwd`, an
 
 The original local INI is never rewritten. Passwords/email addresses are not copied into settings, session files, logs, source, or releases. Login uses the same command-line mechanism as the supplied working farm. Keep `characters.ini` outside the repository; `.gitignore` also excludes it and Dat files.
 
-Settings, selected rows, rendering preferences, column widths, session registries and logs live under `%LOCALAPPDATA%\SkelefarmHub`. Logs rotate at approximately 5 MiB. Accounts on one Windows PC are supported; cross-PC teams are not implemented. Seasonal turn-ins and trader purchases are implemented but intentionally disabled pending live NPC testing.
+Settings, selected rows, rendering preferences, column widths, session registries and logs live under `Files beside the hub executable`. Logs rotate at approximately 5 MiB. Accounts on one Windows PC are supported; cross-PC teams are not implemented. Seasonal turn-ins and trader purchases are implemented but intentionally disabled pending live NPC testing.
 
 ## Run from source
 
@@ -132,7 +132,7 @@ Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe
 Keep these together:
 
 - `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.4.4.exe`
+- `Skelefarm-worker-0.4.5.exe`
 
 The Python worker embeds its versioned x86 bridge. Target PCs need neither Python nor AutoIt once built. Pin the hub executable to the taskbar.
 
@@ -157,3 +157,13 @@ The v0.2.1 updater passed all 29 Windows checks, real replacement/restart and ro
 Version 0.3 adds Python farm-scenario tests and a Qt desktop smoke test. Live game behavior, combat/build suitability, current memory signatures and repeated UW entry require supervised in-game testing. Begin with two accounts. These changes do not claim a completed live farm test.
 
 Unexpected client exits are detected by the hub even if the worker has not reported an error. Recovery restarts the account in the same team session, preserving Run/Pause. Stop cancels recovery. Three consecutive failures stop retries; two minutes of healthy operation reset that allowance. Rejoining uses the existing ToA party assembly workflow.
+
+### Bulk accounts and portable data (v0.4.5)
+
+Add Account opens a count dropdown from 1–10 and shows that many numbered Character Name, Guild Wars Executable, Email and Password fields. Reducing/increasing the count retains typed input. The batch is validated before saving; a credential-write failure restores previous files/settings. New accounts fill available teams up to eight members and create another team as needed; use the main table to rearrange them.
+
+The hub creates `Files` beside its executable and stores settings, managed characters INIs, sessions, logs and update staging there. First startup migrates older LocalAppData settings without overwriting newer portable settings. Imported characters configs are copied into Files; GW installations and the AutoIt executable stay at the paths you selected. After old workers finish shutdown, the old profile directory is moved into Files/migration-backup; this version uses only the portable data. Keep both bot executables and Files together in a writable folder.
+
+Updates start the replacement hub with a fresh PyInstaller environment, fixing the "Invalid originating onefile parent process (PID not found)" error even with no workers running. Successful updates remove unused older versioned worker/bridge executables while preserving active workers and all user files; completed installer payloads are removed after startup with small logs retained under Files/logs. Failed updates retain diagnostic staging and rollback files.
+
+For the first upgrade from v0.4.4 or earlier, if the old updater displays that error, close it and start the newly installed Skelefarm Hub.exe manually (or extract this release ZIP into the bot folder). Later updates use the corrected handoff.

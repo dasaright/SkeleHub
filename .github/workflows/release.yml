@@ -27,6 +27,9 @@ jobs:
       - name: Check and build
         shell: pwsh
         run: .\Build-Windows.ps1
+      - name: Verify real frozen updater restart
+        shell: pwsh
+        run: python tests/check_frozen_restart.py
       - uses: actions/upload-artifact@v4
         with:
           name: SkeleHub-Windows

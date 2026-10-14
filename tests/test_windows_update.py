@@ -26,7 +26,7 @@ class WindowsReplacementTests(unittest.TestCase):
 class TestProcess {
  static void Main(string[] args) {
   if(args.Length > 0 && args[0] == "old") { Thread.Sleep(2500); return; }
-  if(args.Length == 0) File.WriteAllText("restarted.pid", Process.GetCurrentProcess().Id.ToString());
+  if(args.Length == 0) { File.WriteAllText("restarted.pid", Process.GetCurrentProcess().Id.ToString()); File.WriteAllText("restart-env.txt", Environment.GetEnvironmentVariable("PYINSTALLER_RESET_ENVIRONMENT") + "|" + Environment.GetEnvironmentVariable("_PYI_PARENT_PROCESS_LEVEL")); }
   Thread.Sleep(120000);
  }
 }''')
@@ -44,6 +44,9 @@ class TestProcess {
             shutil.copy2(self.program, hub)
             shutil.copy2(self.program, old_worker)
             original = hub.read_bytes()
+            retired = install / worker_name('0.1.0')
+            shutil.copy2(self.program, retired)
+            (install / 'my-notes.txt').write_text('keep')
             (install / 'settings.json').write_text('local-settings')
             (install / 'sessions.json').write_text('local-sessions')
             shutil.copy2(self.program, stage / 'Skelefarm Hub.exe')
@@ -61,7 +64,7 @@ class TestProcess {
             try:
                 helper = subprocess.Popen(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                     str(stage / 'apply.ps1'), '-HubPid', str(old.pid), '-InstallDir', str(install), '-StagingDir', str(stage)],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ, '_PYI_PARENT_PROCESS_LEVEL': '1', '_PYI_ARCHIVE_FILE': str(hub), '_PYI_PARENT_PROCESS_ID': '99999999'})
                 stdout, stderr = helper.communicate(timeout=90)
                 self.assertEqual(helper.returncode, 0, stderr.decode(errors='replace'))
                 report = json.loads((data / 'last-update.json').read_text(encoding='utf-8-sig'))
@@ -75,11 +78,14 @@ class TestProcess {
                 else:
                     self.assertTrue(hub.read_bytes().endswith(b'new-build-marker'))
                     self.assertTrue((install / new_worker).exists())
+                    self.assertFalse(retired.exists())
+                    self.assertEqual((install / 'my-notes.txt').read_text(), 'keep')
                 deadline = time.monotonic() + 10
                 while not (install / 'restarted.pid').exists() and time.monotonic() < deadline:
                     time.sleep(0.1)
                 restarted_pid = int((install / 'restarted.pid').read_text())
                 self.assertGreater(restarted_pid, 0)
+                self.assertEqual((install / 'restart-env.txt').read_text(), '1|')
             finally:
                 # Clean up only the temporary processes this test created.
                 for process in (old, worker):

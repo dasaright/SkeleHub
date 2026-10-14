@@ -12,7 +12,7 @@ from PySide6.QtCore import Qt, QTimer, QSignalBlocker
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QFileDialog, QMessageBox, QDialog, QFormLayout, QLineEdit,
-    QComboBox, QDialogButtonBox, QInputDialog)
+    QComboBox, QDialogButtonBox, QInputDialog, QScrollArea)
 import controller as engine
 from core import DEFAULT, atomic_text, write_control, read_status
 from qt_style import STYLE
@@ -104,6 +104,72 @@ class TableAdapter:
             checkbox.setChecked(bool(int(status.get('renderingdisabled', int(account.get('rendering', True))))))
 
 
+class BulkAccountDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Add Accounts')
+        self.resize(680, 600)
+        layout = QVBoxLayout(self)
+        count_row = QHBoxLayout()
+        count_row.addWidget(QLabel('Number of accounts'))
+        self.count = QComboBox()
+        self.count.addItems([str(n) for n in range(1, 11)])
+        self.count.setObjectName('account_count')
+        count_row.addWidget(self.count)
+        layout.addLayout(count_row)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        form = QFormLayout(content)
+        self.fields, self.field_rows = [], []
+        for n in range(1, 11):
+            fields, rows = {}, []
+            for key, caption in [('character', 'Character Name'), ('gw_exe', 'Guild Wars Executable'), ('email', 'Email'), ('password', 'Account Password')]:
+                editor = QLineEdit()
+                editor.setObjectName(f'{key}_{n}')
+                if key == 'password':
+                    editor.setEchoMode(QLineEdit.EchoMode.Password)
+                fields[key] = editor
+                widget = editor
+                if key == 'gw_exe':
+                    widget = QWidget()
+                    line = QHBoxLayout(widget)
+                    line.setContentsMargins(0, 0, 0, 0)
+                    line.addWidget(editor)
+                    browse = QPushButton('Browse…')
+                    def choose(checked=False, target=editor):
+                        path = QFileDialog.getOpenFileName(self, 'Guild Wars Executable', '', 'Guild Wars (Gw.exe);;Executables (*.exe)')[0]
+                        if path:
+                            target.setText(path)
+                    browse.clicked.connect(choose)
+                    line.addWidget(browse)
+                label = QLabel(f'{caption} Account {n}')
+                form.addRow(label, widget)
+                rows.append((label, widget))
+            self.fields.append(fields)
+            self.field_rows.append(rows)
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+        layout.addWidget(QLabel('Gw.dat is checked beside each executable. Teams hold up to 8; extra accounts use another team.'))
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        self.count.currentIndexChanged.connect(self.update_count)
+        self.update_count()
+
+    def update_count(self):
+        count = int(self.count.currentText())
+        for i, rows in enumerate(self.field_rows):
+            for label, editor in rows:
+                label.setVisible(i < count)
+                editor.setVisible(i < count)
+
+    def records(self):
+        return [{key: editor.text() if key == 'password' else editor.text().strip() for key, editor in fields.items()}
+                for fields in self.fields[:int(self.count.currentText())]]
+
+
 class Desktop(QMainWindow):
     # The same account/controller reuse pattern as EncounterHub's Qt desktop.
     import_characters = engine.Hub.import_characters
@@ -119,6 +185,7 @@ class Desktop(QMainWindow):
     add = engine.Hub.add
     edit = engine.Hub.edit
     account_dialog = engine.Hub.account_dialog
+    save_accounts = engine.Hub.save_accounts
     save_draft = engine.Hub.save_draft
     remove = engine.Hub.remove
     team_settings = engine.Hub.team_settings
@@ -235,6 +302,15 @@ class Desktop(QMainWindow):
             except (ValueError, OSError, KeyError):
                 pass
         self.refresh()
+        from portable import cleanup_updates, archive_legacy
+        def tidy():
+            cleanup_updates(engine.DATA)
+            archive_legacy(engine.DATA)
+        QTimer.singleShot(10000, self, lambda: self.pool.submit(tidy) if not self.force_close else None)
+
+    def bulk_account_dialog(self):
+        dialog = BulkAccountDialog(self)
+        return dialog.records() if dialog.exec() == QDialog.DialogCode.Accepted else None
 
     def reindex(self):
         self.rows = {self.grid.item(row, 1).data(Qt.ItemDataRole.UserRole): row for row in range(self.grid.rowCount())}

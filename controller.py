@@ -15,14 +15,14 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import uuid
 from accounts import read_characters, merge_accounts, validate_install, migrate_settings, save_character, character_email
+from portable import prepare_data, managed_characters
 from windows_recovery import dismiss_crash_dialogs
 from version import VERSION, worker_name
 from updater import check_release, stage_release, apply_and_restart
 from core import DEFAULT, atomic_text, write_ini, write_control, read_status, save_config, snapshot, validate
 
 ROOT = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
-DATA = Path(os.environ.get('LOCALAPPDATA', str(ROOT))) / 'SkelefarmHub'
-DATA.mkdir(parents=True, exist_ok=True)
+DATA = prepare_data(ROOT)
 CONFIG = DATA / 'settings.json'
 SESSIONS = DATA / 'sessions.json'
 
@@ -135,6 +135,7 @@ class Hub:
             return
         old = copy.deepcopy(self.config)
         try:
+            path = str(managed_characters(path, DATA))
             records = read_characters(path)
             merge_accounts(self.config, records)
             self.config['characters_ini'] = str(Path(path).resolve())
@@ -290,7 +291,14 @@ class Hub:
             self.account_dialog(next(a for a in self.config['accounts'] if a['id'] == self.table.selection()[0]))
 
     def account_dialog(self, account):
-        a = account or dict(id=uuid.uuid4().hex[:12], character='', team='Team 1', leader=False, rendering=True)
+        if account is None:
+            if self.busy or any(self.active(team) for team in self.config['teams']):
+                return messagebox.showinfo('Active accounts', 'Stop teams before adding accounts.')
+            results = self.bulk_account_dialog()
+            if results:
+                self.save_accounts(results)
+            return
+        a = account
         if self.active(a['team']) or self.busy:
             return messagebox.showinfo('Active team', 'Stop this team before editing its configuration.')
         ini = a.get('characters_ini') or self.config.get('characters_ini') or str(DATA / 'characters.ini')
@@ -300,31 +308,66 @@ class Hub:
             ('email', 'Account Email', character_email(ini, a.get('section', a['character'])), None),
             ('password', 'Account Password (blank keeps saved password)', '', None),
         ])
-        if not result:
-            return
+        if result:
+            self.save_accounts([result], account)
+
+    def save_accounts(self, results, account=None):
         before = copy.deepcopy(self.config)
+        backups = {}
         try:
             from pathlib import PureWindowsPath
-            dat = str(PureWindowsPath(result['gw_exe']).with_name('Gw.dat'))
-            validate_install(result['gw_exe'], dat)
-            if not result['email'] or any(c in result['email'] for c in '\r\n'):
-                raise ValueError('Enter an account email.')
-            updated = dict(a, character=result['character'], gw_exe=result['gw_exe'], dat_path=dat,
-                           characters_ini=ini, section=result['character'], launch_mode='Direct',
-                           crypto_seed=a.get('crypto_seed', 'Encounter_ReBuilt.au3'), leader=False,
-                           rendering=a.get('rendering', True))
-            if account:
-                self.config['accounts'] = [updated if x['id'] == a['id'] else x for x in self.config['accounts']]
-            else:
-                self.config['accounts'].append(updated)
-            # Validate before touching credentials; save only metadata to hub settings.
+            from accounts import protect_password
+            entries = []
+            for result in results:
+                a = account or dict(id=uuid.uuid4().hex[:12], character='', team='Team 1', leader=False, rendering=True)
+                if not account:
+                    # GW parties have eight slots. Spill bulk additions into another team.
+                    team = next((name for name in self.config['teams'] if sum(x['team'] == name for x in self.config['accounts']) < 8), None)
+                    if team is None:
+                        n = 2
+                        while f'Team {n}' in self.config['teams']:
+                            n += 1
+                        team = f'Team {n}'
+                        self.config['teams'][team] = copy.deepcopy(DEFAULT['teams']['Team 1'])
+                    a['team'] = team
+                ini = str(managed_characters(a.get('characters_ini') or self.config.get('characters_ini') or DATA / 'characters.ini', DATA))
+                dat = str(PureWindowsPath(result['gw_exe']).with_name('Gw.dat'))
+                validate_install(result['gw_exe'], dat)
+                if not result['email'] or any(c in result['email'] for c in '\r\n'):
+                    raise ValueError('Enter an account email for each account.')
+                if not account and not result['password']:
+                    raise ValueError('Enter a password for each new account.')
+                updated = dict(a, character=result['character'], gw_exe=result['gw_exe'], dat_path=dat,
+                               characters_ini=ini, section=result['character'], launch_mode='Direct',
+                               crypto_seed=a.get('crypto_seed', 'Encounter_ReBuilt.au3'), leader=False,
+                               rendering=a.get('rendering', True))
+                if account:
+                    self.config['accounts'] = [updated if x['id'] == a['id'] else x for x in self.config['accounts']]
+                else:
+                    self.config['accounts'].append(updated)
+                entries.append((ini, result, a))
+            # Validate the whole batch before writing credentials or settings.
+            candidate = copy.deepcopy(self.config)
+            for team in candidate['teams']:
+                for i, a in enumerate(x for x in candidate['accounts'] if x['team'] == team):
+                    a['leader'] = i == 0
+            validate(candidate)
+            for ini, result, a in entries:
+                target = Path(ini)
+                if target not in backups:
+                    backups[target] = target.read_bytes() if target.exists() else None
+                save_character(ini, result['character'], result['email'], result['gw_exe'], result['password'],
+                               old_section=a.get('section', a['character']))
             self.save_draft()
-            save_character(ini, result['character'], result['email'], result['gw_exe'],
-                           result['password'], old_section=a.get('section', a['character']))
-            self.notice.set('Account saved. Gw.dat was found beside the executable; credentials saved to characters config.')
+            self.notice.set(f'Saved {len(entries)} account(s). Credentials and settings are in Files beside the bot.')
         except (ValueError, OSError) as exc:
             self.config = before
-            self.save_draft()
+            for target, contents in backups.items():
+                if contents is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    # Restore the original encoding exactly.
+                    target.write_bytes(contents)
             messagebox.showerror('Account', str(exc))
 
     def save_draft(self):

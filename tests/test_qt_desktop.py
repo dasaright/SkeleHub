@@ -104,9 +104,9 @@ class QtDesktopTests(unittest.TestCase):
                     window.choose_team('one')
                     self.assertEqual(window.config['accounts'][0]['team'], 'Team 1')
                     self.assertNotIn('Team 2', window.config['teams'])
-                    with patch.object(window, 'dialog', return_value=dict(character='Beta', gw_exe=r'C:\GW\Gw.exe', email='test@example.invalid', password=' synthetic ')) as dialog, patch('controller.validate_install'), patch('controller.save_character') as save:
+                    with patch.object(window, 'bulk_account_dialog', return_value=[dict(character='Beta', gw_exe=r'C:\GW\Gw.exe', email='test@example.invalid', password=' synthetic ')]) as dialog, patch('controller.validate_install'), patch('controller.save_character') as save:
                         window.add()
-                    self.assertEqual([f[0] for f in dialog.call_args.args[1]], ['character', 'gw_exe', 'email', 'password'])
+                    dialog.assert_called_once_with()
                     added = window.config['accounts'][-1]
                     self.assertEqual(added['dat_path'], r'C:\GW\Gw.dat')
                     self.assertTrue(added['rendering'])
@@ -119,3 +119,26 @@ class QtDesktopTests(unittest.TestCase):
                     window.force_close = True
                     window.close()
                     self.app.processEvents()
+
+    def test_bulk_dialog_one_through_ten_retains_entered_values(self):
+        from desktop import BulkAccountDialog
+        from PySide6.QtWidgets import QLineEdit
+        dialog = BulkAccountDialog()
+        try:
+            self.assertEqual(dialog.count.count(), 10)
+            self.assertEqual(len(dialog.records()), 1)
+            dialog.count.setCurrentText('10')
+            self.assertEqual(len(dialog.records()), 10)
+            for i, fields in enumerate(dialog.fields, 1):
+                fields['character'].setText(f'Character {i}')
+                fields['password'].setText(' secret ')
+                self.assertEqual(fields['password'].echoMode(), QLineEdit.EchoMode.Password)
+                self.assertFalse(dialog.field_rows[i-1][0][1].isHidden())
+            dialog.count.setCurrentText('1')
+            self.assertEqual(len(dialog.records()), 1)
+            self.assertTrue(dialog.field_rows[9][0][1].isHidden())
+            dialog.count.setCurrentText('10')
+            self.assertEqual(dialog.records()[9]['character'], 'Character 10')
+            self.assertEqual(dialog.records()[9]['password'], ' secret ')
+        finally:
+            dialog.close()

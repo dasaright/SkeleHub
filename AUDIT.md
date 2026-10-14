@@ -96,3 +96,7 @@ Detect exited game processes independently of worker error reporting; relaunch i
 ## v0.4.4
 
 Simplified account input to character, executable, email and password; derive and validate sibling Gw.dat. Save credentials only to characters INI with DPAPI for newly entered passwords; preserve Encounter SEC compatibility. Main-window team dropdown supports assignment/create/delete, with Team 1 protected. Roles stay blank before live funded leader selection; initial leader is first funded selected row, with exact no-funds error when none qualify. Enable rendering suppression by default and migrate old metadata/widths once. Remove row Launch; add Launch All and retain Launch Selected. Rename path dialog to AutoIT Path. Account edits preserve row order. Tests cover saved settings, credential preservation and Windows/native DPAPI compatibility, Qt account/team controls, initial funding selection, and existing farm/update behavior.
+
+## v0.4.5
+
+Add 1–10 account bulk form with numbered fields, whole-batch validation and credential rollback. Fill teams to GW party capacity and create overflow teams. Relocate runtime data to sibling Files and copy/migrate old user-profile settings and external credential configs without overwriting portable data. Clean recognized retired executable versions only when inactive, and clear completed update payloads after startup. Reset PyInstaller environment in helper launch, success restart and rollback restart to avoid stale onefile parent PID failures. Add actual frozen onefile updater/restart verification to release CI.
