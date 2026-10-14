@@ -1,4 +1,4 @@
-# Skelefarm Hub / Python SkeleBot — v0.4.1
+# Skelefarm Hub / Python SkeleBot — v0.4.2
 
 A Windows Python hub and Python farm controller for selected Guild Wars accounts. The desktop uses EncounterHub's PySide6 implementation pattern and the same charcoal/teal stylesheet, checkboxes, per-row controls, and saved column widths.
 
@@ -14,7 +14,7 @@ New columns show carried platinum, storage platinum, available Captured Skeleton
 
 ## Handle Currency test buttons
 
-Each account has **Handle Currency**, and the bottom toolbar has **Handle Currency Selected**. Launch accounts first. A request waits until the account is in an outpost, leaves the party, visits Embark Beach/Duuja, requests quotes and exercises the existing currency policy, then returns to the configured ToA district. It works with funding rotation and seasonal turn-ins disabled and preserves Pause. Teammates wait while the account is away. Repeated clicks are coalesced rather than restarting a pending purchase.
+Each account has **Handle Currency**, and the bottom toolbar has **Handle Currency Selected**. Launch accounts first. A request waits until the account is in an outpost, leaves the party, visits Eye of the North/Roland, requests quotes and exercises the existing currency policy, then returns to the configured ToA district. It works with funding rotation and seasonal turn-ins disabled and preserves Pause. Teammates wait while the account is away. Repeated clicks are coalesced rather than restarting a pending purchase.
 
 This test never sends seasonal quest dialogs or consumes skeletons. It counts skeleton value toward the existing 800–900 platinum limits, so it can visit and obtain a quote without buying when the policy calls for no purchase. It does not force a purchase below the configured valuation band.
 
@@ -24,11 +24,11 @@ This test never sends seasonal quest dialogs or consumes skeletons. It counts sk
 
 When enabled and all accounts are Empty on Plat, each character leaves the party and independently travels to Lion's Arch. The reference script supplies the NPC location (5267, 9070), dialogs `0x846303`, `0x846301`, `0x846307`, and alternating districts 1/2. The worker checks both skeleton consumption and ToT bag receipt, banks ToT bags into existing stacks/free storage slots, deposits gold, and changes district before repeating. It stops rather than blindly repeating an unconfirmed reward or deposit.
 
-Valuation uses **inventory gold + storage gold + floor(Captured Skeletons / 3) × 1,000 gold**. Once storage exceeds 800 platinum and that value exceeds 900, the character travels to Embark Beach, locates Duuja by name, obtains fresh quotes, and buys ectoplasm one at a time. Each purchase must increase ectoplasm and decrease gold before another is sent. It stops in the 800–900 platinum band when attainable. If the skeleton value alone exceeds 900, it spends liquid gold until it cannot afford the next quote, then resumes Lion's Arch turn-ins and repeats when storage builds up again. Ectoplasm is retained in inventory and is not counted as liquid platinum.
+Valuation uses **inventory gold + storage gold + floor(Captured Skeletons / 3) × 1,000 gold**. Once storage exceeds 800 platinum and that value exceeds 900, the character travels to Eye of the North, locates Roland by name, obtains fresh quotes, and buys ectoplasm one at a time. Each purchase must increase ectoplasm and decrease gold before another is sent. It stops in the 800–900 platinum band when attainable. If the skeleton value alone exceeds 900, it spends liquid gold until it cannot afford the next quote, then resumes Lion's Arch turn-ins and repeats when storage builds up again. Ectoplasm is retained in inventory and is not counted as liquid platinum.
 
 With 0–2 skeletons left, each account returns to the configured ToA district. The team waits for everyone to finish, clears Empty on Plat flags, reassembles, and resumes farming. Missing seasonal NPCs, unreachable trader, full storage/inventory, stale quotes or unconfirmed transactions produce an Economy Hold instead of an account restart loop. Worker recovery resumes the persisted stage. Starting a new team session reassesses current inventories. NPC interaction, paths, gold access and trading require supervised live testing once available.
 
-Source references: uploaded Skele turn-in script; GwAu3 item/merchant APIs; [Duuja](https://wiki.guildwars.com/wiki/Duuja); [party leadership on leaving](https://wiki.guildwars.com/wiki/Party).
+Source references: uploaded Skele turn-in script; GwAu3 item/merchant APIs; [Roland](https://wiki.guildwars.com/wiki/Roland); [party leadership on leaving](https://wiki.guildwars.com/wiki/Party).
 
 ## Death's Charge and party retention
 
@@ -132,7 +132,7 @@ Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe
 Keep these together:
 
 - `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.4.1.exe`
+- `Skelefarm-worker-0.4.2.exe`
 
 The Python worker embeds its versioned x86 bridge. Target PCs need neither Python nor AutoIt once built. Pin the hub executable to the taskbar.
 

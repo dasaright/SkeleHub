@@ -84,3 +84,7 @@ Version 0.4.0 adds funding rotation and an opt-in seasonal economy state machine
 
 
 Version 0.4.1 initializes and verifies the template once per worker/character initialization, without reloading on town returns. Death's Charge and Smoke Powder Defense must be confirmed before Signet. Manual per-account/selected currency tests persist separate state, coalesce repeated clicks, wait for an outpost, retain the current run/pause command and follow the existing valuation/quote/receipt checks. They never invoke the seasonal quest route.
+
+## v0.4.2
+
+Currency handling now visits Eye of the North (map 642) and Roland for both manual testing and seasonal ectoplasm purchases. Existing persisted embark stages route to the new destination without resetting purchase progress. Buying limits and return to ToA are unchanged.

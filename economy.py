@@ -6,7 +6,7 @@ import time
 from core import atomic_text, read_status
 from game_bridge import fields
 
-TOA, LA, EMBARK = 138, 55, 857
+TOA, LA, EYE_OF_THE_NORTH = 138, 55, 642
 LA_MAPS = {55, 808}
 TARGET_CARRIED, EMPTY_CARRIED = 20_000, 5_000
 TURNIN_DIALOGS = (0x846303, 0x846301, 0x846307)
@@ -248,7 +248,7 @@ class Economy:
             self.stage('leave')
         phase = 'Currency' if manual else 'TurnIn'
         if w.phase != phase and not self.hold:
-            w.change(phase, 'Handle Currency — independent Embark test' if manual else 'Turn In Mobs — independent account workflow')
+            w.change(phase, 'Handle Currency — independent Eye of the North test' if manual else 'Turn In Mobs — independent account workflow')
         stage = self.progress['stage']
         w.state = ('Handle Currency — ' if manual else 'Turn In Mobs — ') + stage
         if stage == 'leave':
@@ -328,10 +328,13 @@ class Economy:
         elif stage == 'district':
             self.stage('assess', district=2 if self.progress.get('district', 1) == 1 else 1)
         elif stage == 'embark':
-            if self.travel(EMBARK):
+            if self.travel(EYE_OF_THE_NORTH):
                 self.stage('trader')
         elif stage == 'trader':
-            npc = int(w.game.call('npc_name', 'Duuja'))
+            if w.s['map'] != EYE_OF_THE_NORTH:
+                self.stage('embark')
+                return
+            npc = int(w.game.call('npc_name', 'Roland'))
             if npc:
                 if w.game.agent(npc).get('distance', 99999) <= 200:
                     w.game.call('npc', npc)
@@ -339,7 +342,7 @@ class Economy:
                 elif self.due():
                     w.game.call('npc', npc)
             if w.clock() - self.stage_since > 90:
-                self.block('Duuja could not be reached at Embark Beach; trader path needs live validation')
+                self.block('Roland could not be reached at Eye of the North; trader path needs live validation')
         elif stage == 'quote':
             quote = int(w.game.call('ecto_quote'))
             decision = purchase_decision(self.inv, quote)

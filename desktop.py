@@ -257,7 +257,7 @@ class Desktop(QMainWindow):
         for key in ('pause', 'resume', 'stop', 'launch', 'currency'):
             button = QPushButton('Handle Currency' if key == 'currency' else key.title())
             if key == 'currency':
-                button.setToolTip('Test the Embark ectoplasm handler using the existing 800–900 platinum valuation rules. Runs after returning to an outpost.')
+                button.setToolTip('Test the Eye of the North ectoplasm handler using the existing 800–900 platinum valuation rules. Runs after returning to an outpost.')
             button.clicked.connect(lambda checked=False, action=key, aid=account_id: self.row_action(aid, action))
             self.grid.setCellWidget(row, COLUMNS.index(key), button)
 
@@ -310,7 +310,7 @@ class Desktop(QMainWindow):
                 continue
             write_control(Path(session['dir']) / (account['id'] + '.command.ini'), currency_request=uuid.uuid4().hex)
             queued += 1
-        self.notice.set(f'Handle Currency queued for {queued} account(s); waits for an outpost, visits Embark, applies existing buying rules, then returns to ToA.'
+        self.notice.set(f'Handle Currency queued for {queued} account(s); waits for an outpost, visits Eye of the North, applies existing buying rules, then returns to ToA.'
                         if queued else 'Launch the selected accounts first, then press Handle Currency.')
 
     def set_rendering(self, account_id, disabled):
