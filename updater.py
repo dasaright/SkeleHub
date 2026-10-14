@@ -73,12 +73,14 @@ def validate_package(path, version):
     return names
 
 
-def stage_release(release, data_dir):
+def stage_release(release, data_dir, progress=None):
+    report = progress or (lambda message: None)
     staging = Path(tempfile.mkdtemp(prefix='update-', dir=data_dir))
     try:
         package = staging / 'package.zip'
         size = 0
         hasher = hashlib.sha256()
+        report('Connecting to update download…')
         with urllib.request.urlopen(request(release['url']), timeout=30) as response, package.open('wb') as output:
             while True:
                 chunk = response.read(1024 * 1024)
@@ -89,12 +91,20 @@ def stage_release(release, data_dir):
                     raise ValueError('Update exceeds the maximum size.')
                 output.write(chunk)
                 hasher.update(chunk)
+                total = release.get('size', 0)
+                if total:
+                    report(f"Downloading v{release['version']}: {min(100, int(size * 100 / total))}% ({size / 1048576:.1f} / {total / 1048576:.1f} MB)")
+                else:
+                    report(f"Downloading v{release['version']}: {size / 1048576:.1f} MB")
+        report('Verifying download size and checksum…')
         digest = release.get('digest')
         if digest and digest != 'sha256:' + hasher.hexdigest():
             raise ValueError('Release checksum does not match.')
         if release.get('size') and release['size'] != size:
             raise ValueError('Download is incomplete.')
+        report('Validating update package…')
         names = validate_package(package, release['version'])
+        report('Extracting update files…')
         with zipfile.ZipFile(package) as archive:
             for name in names:
                 target = staging / name
@@ -102,6 +112,7 @@ def stage_release(release, data_dir):
                     shutil.copyfileobj(src, out)
         (staging / 'apply.ps1').write_text(HELPER, encoding='utf-8-sig')
         (staging / 'manifest.json').write_text(json.dumps(names), encoding='utf-8')
+        report('Update verified and ready to install.')
         return staging
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)

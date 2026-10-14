@@ -124,7 +124,12 @@ class DownloadAndHandoffTests(unittest.TestCase):
             sentinel = Path(directory) / 'settings.json'
             sentinel.write_text('preserve me')
             with patch('urllib.request.urlopen', return_value=io.BytesIO(data)):
-                stage = stage_release(release, directory)
+                progress = []
+                stage = stage_release(release, directory, progress=progress.append)
+            self.assertTrue(any('100%' in message for message in progress))
+            self.assertIn('Validating update package…', progress)
+            self.assertIn('Extracting update files…', progress)
+            self.assertEqual(progress[-1], 'Update verified and ready to install.')
             self.assertTrue((stage / 'apply.ps1').is_file())
             self.assertEqual((stage / worker_name('0.3.0')).read_bytes(), b'MZworker')
             self.assertEqual(sentinel.read_text(), 'preserve me')

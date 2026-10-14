@@ -1,4 +1,4 @@
-# Skelefarm Hub / Python SkeleBot — v0.3.4
+# Skelefarm Hub / Python SkeleBot — v0.3.5
 
 A Windows Python hub and Python farm controller for selected Guild Wars accounts. The desktop uses EncounterHub's PySide6 implementation pattern and the same charcoal/teal stylesheet, checkboxes, per-row controls, and saved column widths.
 
@@ -8,7 +8,7 @@ Workers stop when the hub closes, including an update restart. New workers also 
 
 ## Character selection and build checks
 
-Version 0.3.4 follows Encounter ReBuilt's selection sequence: attach to the newly launched playable client PID, wait for character selection, send N, search right for the configured character (up to 20 slots), then press Enter. It confirms the actual loaded character and waits for outpost/profession data before travelling. Missing or wrong characters stop with an attention message.
+Version 0.3.5 follows Encounter ReBuilt's selection sequence: attach to the newly launched playable client PID, wait for character selection, send N, search right for the configured character (up to 20 slots), then press Enter. It confirms the actual loaded character and waits for outpost/profession data before travelling. Missing or wrong characters stop with an attention message.
 
 The original farm template is loaded in the outpost after confirming Assassin primary. The worker verifies Monk secondary, 12 base Smiting Prayers, 12 base Shadow Arts and all eight slot values (including the empty eighth slot). It allows 15 seconds for updates and at most three load attempts before reporting unavailable professions, attributes or skills. Live game verification is still required.
 
@@ -82,9 +82,11 @@ Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe
 Keep these together:
 
 - `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.3.4.exe`
+- `Skelefarm-worker-0.3.5.exe`
 
 The Python worker embeds its versioned x86 bridge. Target PCs need neither Python nor AutoIt once built. Pin the hub executable to the taskbar.
+
+The bottom-left status message shows release checks, download percentage and MB, checksum/package validation, extraction, helper startup, restart, and the result after reopening. Helper startup runs off the UI thread.
 
 **Check for Updates** reads the public GitHub release feed. **Update Now** downloads the matching `SkeleHub-VERSION-windows.zip`, verifies its digest when supplied, rejects unexpected ZIP contents, confirms the helper started, then closes the hub. A separate helper waits for it to exit, retries temporary file locks, replaces files with backups, and restarts the hub. Failure attempts rollback. Settings and credentials are never replaced.
 

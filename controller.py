@@ -3,6 +3,7 @@ import copy
 import ctypes
 import json
 import os
+import queue
 from pathlib import Path
 import subprocess
 import sys
@@ -166,7 +167,7 @@ class Hub:
             self.update_release = release
             if release:
                 self.update_button.configure(state='normal')
-                self.notice.set(f"Version {release['version']} is available. Update Now restarts only the hub; active workers stay running.")
+                self.notice.set(f"Version {release['version']} is available. Update Now stops workers and restarts the hub; game clients stay open.")
             else:
                 self.notice.set(f'You are up to date ({VERSION}).')
         self.background(check_release, done)
@@ -179,26 +180,45 @@ class Hub:
         self.update_busy = True
         self.update_button.configure(state='disabled')
         self.check_button.configure(state='disabled')
-        self.notice.set('Downloading and checking the update…')
+        self.notice.set('Preparing update download…')
         release = dict(self.update_release)
+        updates = queue.SimpleQueue()
+        def show_progress():
+            latest = None
+            while not updates.empty():
+                latest = updates.get_nowait()
+            if latest is not None and self.update_busy:
+                self.notice.set(latest)
+            if self.update_busy:
+                self.root.after(100, show_progress)
+        self.root.after(100, show_progress)
+        def failed(message):
+            self.update_busy = False
+            self.check_button.configure(state='normal')
+            self.update_button.configure(state='normal')
+            self.notice.set(message)
+        def helper_ready(result, error):
+            if error:
+                failed(f'Could not start update; hub remains open: {error}')
+                return
+            self.notice.set(f"Installing v{release['version']} — stopping workers and restarting the hub…")
+            self.root.after(200, self.root.destroy)
         def done(staging, error):
             if error:
-                self.update_busy = False
-                self.check_button.configure(state='normal')
-                self.update_button.configure(state='normal')
-                self.notice.set(f'Update failed; the hub and workers are still running: {error}')
+                failed(f'Update failed; hub remains open: {error}')
                 return
+            # Drain queued download text before starting the next phase.
+            while not updates.empty():
+                updates.get_nowait()
+            self.notice.set('Starting update helper; waiting for startup confirmation…')
             try:
                 self.persist_sessions()
-                apply_and_restart(staging, ROOT, os.getpid())
             except Exception as exc:
-                self.update_busy = False
-                self.check_button.configure(state='normal')
-                self.update_button.configure(state='normal')
-                self.notice.set(f'Could not start update: {exc}')
+                failed(f'Could not prepare update: {exc}')
                 return
-            self.root.destroy()
-        self.background(lambda: stage_release(release, DATA), done)
+            # The helper handshake can take eight seconds. Keep the GUI responsive.
+            self.background(lambda: apply_and_restart(staging, ROOT, os.getpid()), helper_ready)
+        self.background(lambda: stage_release(release, DATA, progress=updates.put), done)
 
     def persist_sessions(self):
         atomic_text(SESSIONS, json.dumps(self.sessions, indent=2))
