@@ -163,6 +163,16 @@ class PythonWorkerTests(unittest.TestCase):
         self.assertNotIn(('close_game',), self.game.calls)
         self.assertEqual(self.worker.phase, 'Stopped')
 
+    def test_seven_skill_sequence_keeps_attacking_and_repeats_damage(self):
+        self.game.s.update(map=72, instance=1)
+        self.phase('Fight')
+        self.worker.combat_started = True
+        self.worker.step = len(SEQUENCE)
+        self.worker.target = 42
+        self.worker.tick()
+        self.assertIn(('attack', 42), self.game.calls)
+        self.assertEqual(self.worker.step, 3)
+
     def test_combat_test_skips_mobstopper_and_free_slot_gates(self):
         self.phase('Prepare')
         self.worker.tick()

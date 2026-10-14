@@ -540,11 +540,11 @@ class Worker:
             return
         self.state = 'Test: running to and killing Skeleton of Dhuum' if self.test_mode else 'Damaging Skeleton of Dhuum'
         self.cast_next(agent)
-        if self.test_mode and self.step >= 8 and not self.s.get('casting') and self.clock() >= self.cast_until:
+        if self.test_mode and self.step >= len(SEQUENCE) and not self.s.get('casting') and self.clock() >= self.cast_until:
             if self.due(1):
                 self.game.call('attack', self.target)
-            if self.cooldowns().get(3, 0) == 0:
-                self.step = 4
+            if self.cooldowns().get(4, 0) == 0:
+                self.step = 3
 
     def done(self):
         if self.test_mode:
