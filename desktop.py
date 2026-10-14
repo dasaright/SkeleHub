@@ -97,6 +97,7 @@ class Desktop(QMainWindow):
     background = engine.Hub.background
     check_updates = engine.Hub.check_updates
     update_now = engine.Hub.update_now
+    stop_all_workers = engine.Hub.stop_all_workers
     persist_sessions = engine.Hub.persist_sessions
     selected_teams = engine.Hub.selected_teams
     active = engine.Hub.active
@@ -267,7 +268,13 @@ class Desktop(QMainWindow):
         selected = self.checked
         self.checked = {account_id}
         try:
-            if action == 'launch':
+            if action == 'stop':
+                account = next(a for a in self.config['accounts'] if a['id'] == account_id)
+                session = self.sessions.get(account['team'])
+                if session and account_id in session.get('pids', {}):
+                    write_control(Path(session['dir']) / (account_id + '.command.ini'), mode='stop', close_game=True)
+                self.notice.set('Stopping account: closing its Guild Wars client and worker.')
+            elif action == 'launch':
                 self.launch()
             else:
                 self.command({'resume': 'run', 'pause': 'pause', 'stop': 'stop'}[action])
@@ -349,8 +356,9 @@ class Desktop(QMainWindow):
             self.notice.set('Wait for the launch/update operation to finish before closing.')
             event.ignore()
             return
+        self.stop_all_workers()
         self.pool.shutdown(wait=False)
-        event.accept()  # Workers and clients are deliberately independent of the UI lifetime.
+        event.accept()  # Worker cleanup restores rendering; game clients stay open.
 
 
 def main():

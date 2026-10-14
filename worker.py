@@ -9,13 +9,13 @@ import os
 from pathlib import Path
 import sys
 import time
-from core import write_ini, read_status
+from core import write_ini, read_status, write_control
 from game_bridge import GameBridge, fields
 
 TOA, UW = 138, 72
-BUILD = 'OwNS44PTceTQmE4O2kxkRQYh'
-SKILLS = [1948, 1043, 294, 952, 2358, 2353, 1041, 2136]
-SEQUENCE = [1, 2, 4, 7, 3, 5, 6, 8]
+BUILD = 'OwNS44PTAATQmE4O2kxkRQYh'
+SKILLS = [0, 1043, 294, 952, 2358, 2353, 1041, 2136]
+SEQUENCE = [2, 4, 7, 3, 5, 6, 8]
 
 
 def process_alive(pid):
@@ -47,7 +47,8 @@ def read_ini(path):
 
 
 class Worker:
-    def __init__(self, session, account_id, game, clock=time.monotonic):
+    def __init__(self, session, account_id, game, clock=time.monotonic, hub_pid=None):
+        self.hub_pid = hub_pid
         self.session = Path(session)
         self.id = account_id
         self.game, self.clock = game, clock
@@ -158,11 +159,14 @@ class Worker:
     def all_ready(self):
         return self.exact_party() and all(peer and peer.get('phase') == 'Ready' for _, peer in self.peers())
 
+    def hub_alive(self):
+        return self.hub_pid is None or process_alive(self.hub_pid)
+
     def login_wait(self, seconds=.5):
         """Keep controls and status live while the client logs in or changes maps."""
         self.mode = read_ini(self.command_path).get('Control', 'Mode', fallback='pause')
         self.publish()
-        if self.mode == 'stop':
+        if self.mode == 'stop' or not self.hub_alive():
             return False
         time.sleep(seconds)
         return True
@@ -172,6 +176,7 @@ class Worker:
         sorted_names = False
         attempts, initial_index = 0, None
         entering = False
+        left_at = None
         while self.clock() < deadline:
             login = fields(self.game.call('login'))
             if not login.get('alive'):
@@ -188,7 +193,22 @@ class Worker:
                     self.error('Start the character in an outpost')
                     return True
                 else:
-                    self.change('Travel', 'Character verified; travelling to Temple of the Ages')
+                    if left_at is None:
+                        self.game.call('render', 1)
+                        self.render_disabled = True
+                        write_control(self.command_path, rendering=True)
+                        self.game.call('leave')
+                        left_at = self.clock()
+                    roster = [p for p in str(self.s.get('roster', '')).split(',') if p]
+                    if len(roster) > 1 or self.s.get('heroes') or self.s.get('henchmen'):
+                        if self.clock() - left_at > 15:
+                            self.error('Could not leave the previous party after login')
+                            return True
+                        self.state = 'Leaving previous party before team assembly'
+                        if not self.login_wait():
+                            return False
+                        continue
+                    self.change('Travel', 'Character verified; previous party left; rendering disabled')
                     return True
             elif login.get('selection') and login.get('index', -1) >= 0:
                 self.state = 'Selecting configured character'
@@ -223,7 +243,7 @@ class Worker:
         launched_pid = None
         while self.clock() < deadline:
             self.mode = read_ini(self.command_path).get('Control', 'Mode', fallback='pause')
-            if self.mode == 'stop':
+            if self.mode == 'stop' or not self.hub_alive():
                 return False
             self.publish()
             command, target = ('attach_pid', launched_pid) if launched_pid else ('attach', self.character)
@@ -247,7 +267,7 @@ class Worker:
     def tick(self):
         control = read_ini(self.command_path)
         self.mode = control.get('Control', 'Mode', fallback='pause')
-        if self.mode == 'stop':
+        if self.mode == 'stop' or not self.hub_alive():
             return False
         if self.phase == 'Error':
             return True
@@ -572,13 +592,19 @@ class Worker:
                 time.sleep(.1)
         except Exception as exc:
             self.error(f'Game bridge failed: {type(exc).__name__}')
-            while read_ini(self.command_path).get('Control', 'Mode', fallback='stop') != 'stop':
+            while self.hub_alive() and read_ini(self.command_path).get('Control', 'Mode', fallback='stop') != 'stop':
                 self.publish()
                 time.sleep(1)
         finally:
+            close_game = read_ini(self.command_path).getboolean('Control', 'CloseGame', fallback=False)
+            if close_game:
+                try:
+                    self.game.call('close_game')
+                except (RuntimeError, OSError):
+                    pass
             self.game.close()
             self.phase = 'Stopped'
-            self.state = 'Stopped — game client left open'
+            self.state = 'Stopped — game client closed' if close_game else 'Stopped — game client left open'
             self.publish()
 
 
@@ -586,6 +612,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--session', required=True)
     parser.add_argument('--account', required=True)
+    parser.add_argument('--hub-pid', type=int)
     parser.add_argument('--autoit', default=r'C:\Program Files (x86)\AutoIt3\AutoIt3.exe')
     args = parser.parse_args()
     if os.name != 'nt':
@@ -599,7 +626,7 @@ def main():
         return
     root = Path(sys.executable).parent if getattr(sys, 'frozen', False) else Path(__file__).resolve().parent
     game = GameBridge(root, args.autoit, Path(args.session) / (args.account + '.bridge.log'))
-    worker = Worker(args.session, args.account, game)
+    worker = Worker(args.session, args.account, game, hub_pid=args.hub_pid)
     worker.run()
     kernel.CloseHandle.argtypes = [ctypes.c_void_p]
     kernel.CloseHandle(mutex)

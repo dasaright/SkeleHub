@@ -381,7 +381,7 @@ class Hub:
             if a.get('launch_mode') == 'Profile' and a.get('profile'):
                 self.children.append(subprocess.Popen([self.config['launcher'], '-launch', a['profile']], cwd=str(Path(self.config['launcher']).parent), creationflags=flags))
             worker = [str(ROOT / worker_name())] if (ROOT / worker_name()).exists() else [sys.executable, str(ROOT / 'worker.py')]
-            proc = subprocess.Popen(worker + ['--session', str(directory), '--account', a['id'], '--autoit', self.config['autoit']], cwd=str(ROOT), creationflags=flags)
+            proc = subprocess.Popen(worker + ['--session', str(directory), '--account', a['id'], '--autoit', self.config['autoit'], '--hub-pid', str(os.getpid())], cwd=str(ROOT), creationflags=flags)
             self.children.append(proc)
             self.sessions[team]['pids'][a['id']] = proc.pid
             self.persist()
@@ -399,8 +399,8 @@ class Hub:
             session = self.sessions.get(team)
             if session:
                 for account_id in session.get('pids', {}):
-                    write_control(Path(session['dir']) / (account_id + '.command.ini'), mode=mode)
-        self.notice.set({'pause': 'Pause requested: finish the current farm, return, then wait.', 'run': 'Resume requested for selected teams.', 'stop': 'Stop requested: workers restore rendering and exit. Game clients stay open.'}[mode])
+                    write_control(Path(session['dir']) / (account_id + '.command.ini'), mode=mode, close_game=(mode == 'stop'))
+        self.notice.set({'pause': 'Pause requested: finish the current farm, return, then wait.', 'run': 'Resume requested for selected teams.', 'stop': 'Stop requested: selected teams close their game clients and workers.'}[mode])
 
     def logs(self):
         if os.name == 'nt':
@@ -431,9 +431,14 @@ class Hub:
         self.children = [p for p in self.children if p.poll() is None]
         self.root.after(1000, self.refresh)
 
+    def stop_all_workers(self):
+        for session in self.sessions.values():
+            for account_id in session.get('pids', {}):
+                write_control(Path(session['dir']) / (account_id + '.command.ini'), mode='stop', close_game=False)
+
     def close(self):
         if self.busy or self.update_busy:
             return messagebox.showinfo('Working', 'Wait for the launch or update operation to finish before closing.')
-        # Workers are independent and reconnect through sessions.json on next launch.
+        self.stop_all_workers()
         self.root.destroy()
 

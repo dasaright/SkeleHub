@@ -5,7 +5,7 @@
 #include "vendor\GwAu3\API\_GwAu3.au3"
 #include "launcher\AccountLaunch.au3"
 $g_b_AutoUpdate = False
-Global $bridgePort = 0, $bridgeToken = "", $bridgeLog = "", $bridgeAttached = False, $bridgeSocket = -1
+Global $bridgePort = 0, $bridgeToken = "", $bridgeLog = "", $bridgeAttached = False, $bridgeSocket = -1, $bridgeLaunchedPID = 0
 For $i = 1 To $CmdLine[0] - 1
     Switch $CmdLine[$i]
         Case "--port"
@@ -69,7 +69,13 @@ Func BridgeDispatch(ByRef $a)
             _Crypt_Startup()
             Local $pid = Launch_LaunchAccountFromINI($a[2], $a[3], False, $a[4], $a[5])
             _Crypt_Shutdown()
+            $bridgeLaunchedPID = $pid
             Return $pid
+        Case "close_game"
+            Local $ownedPID = $bridgeLaunchedPID
+            If $bridgeAttached Then $ownedPID = $g_i_GWProcessId
+            If $ownedPID > 0 Then ProcessClose($ownedPID)
+            Return "1"
         Case "close"
             Return "1"
     EndSwitch

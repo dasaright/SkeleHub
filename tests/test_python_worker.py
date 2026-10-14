@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 from core import DEFAULT, snapshot, write_control, read_status
-from worker import Worker, SKILLS
+from worker import Worker, SKILLS, SEQUENCE
 
 
 class Clock:
@@ -79,6 +79,9 @@ class PythonWorkerTests(unittest.TestCase):
         self.assertEqual([c for c in self.game.calls if c[0] == 'key'],
                          [('key', 'N'), ('key', 'RIGHT'), ('key', 'ENTER')])
         self.assertEqual(self.worker.phase, 'Travel')
+        self.assertIn(('render', 1), self.game.calls)
+        self.assertIn(('leave',), self.game.calls)
+        self.assertTrue(self.worker.render_disabled)
 
     def test_missing_character_never_enters_wrong_character(self):
         self.login_script(['alive=1\tselection=1\tindex=0\tselected=Wrong'] + [
@@ -136,6 +139,29 @@ class PythonWorkerTests(unittest.TestCase):
             self.clock.advance(16)
         self.assertEqual(self.worker.phase, 'Error')
         self.assertEqual(sum(c[0] == 'build' for c in self.game.calls), 3)
+
+    def test_new_template_skips_empty_first_slot(self):
+        self.assertEqual(SKILLS[0], 0)
+        self.assertNotIn(1, SEQUENCE)
+
+    def test_hub_exit_stops_worker_even_with_run_command(self):
+        self.phase('Party')
+        self.worker.hub_pid = 999
+        with patch('worker.process_alive', return_value=False):
+            self.assertFalse(self.worker.tick())
+            self.assertFalse(self.worker.login_wait())
+
+    def test_stop_closes_only_bound_client_through_bridge(self):
+        write_control(self.worker.command_path, mode='stop', close_game=True)
+        self.worker.run()
+        self.assertIn(('close_game',), self.game.calls)
+        self.assertEqual(self.worker.phase, 'Stopped')
+
+    def test_hub_close_leaves_game_open(self):
+        write_control(self.worker.command_path, mode='stop', close_game=False)
+        self.worker.run()
+        self.assertNotIn(('close_game',), self.game.calls)
+        self.assertEqual(self.worker.phase, 'Stopped')
 
     def test_combat_test_skips_mobstopper_and_free_slot_gates(self):
         self.phase('Prepare')
