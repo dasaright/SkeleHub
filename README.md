@@ -1,10 +1,28 @@
-# Skelefarm Hub / Python SkeleBot — v0.3.10
+# Skelefarm Hub / Python SkeleBot — v0.4.0
 
 A Windows Python hub and Python farm controller for selected Guild Wars accounts. The desktop uses EncounterHub's PySide6 implementation pattern and the same charcoal/teal stylesheet, checkboxes, per-row controls, and saved column widths.
 
 ## Upgrading from versions 0.3.0 through 0.3.7
 
 Those versions contain a Qt/Tk button API mismatch that prevents the update buttons from working. Close the hub, download the v0.3.8 Windows ZIP from GitHub Releases, extract it into the existing installation folder replacing the hub executable, and start the replaced executable. Local settings and accounts remain under LOCALAPPDATA and are preserved. Version 0.3.8 fixes both update buttons; subsequent updates can use the hub. Tests now click the actual Qt buttons through checking, download failure/retry, and helper handoff.
+
+## Leader funding and rotation
+
+Funding rotation is enabled in Team Settings. At ToA, the current party leader withdraws only the amount needed to reach 20 carried platinum (or the remaining storage balance if smaller). With no storage gold, it continues leading while carrying at least 5 platinum. Below 5, it reports **Empty on Plat** and hands the leader role to a funded follower. The controlled funding rotation reforms the party under that account and verifies the resulting party leader. Ordinary party-order changes retain the complete party. After every account is exhausted, the team waits for turn-in mode.
+
+New columns show carried platinum, storage platinum, available Captured Skeletons, and funding state. Currency is tracked separately for each account. Session funding/turn-in state survives worker recovery.
+
+## Seasonal Turn In Mobs — implemented, not live tested
+
+**Enable seasonal turn-ins** in Team Settings is **No by default**. Leave it off until the quest NPC is available. No quest dialogs or ectoplasm purchases are sent while disabled. Combat Test and Farm remain separate: choose Farm when you want actual captures; Combat Test kills do not generate Captured Skeletons.
+
+When enabled and all accounts are Empty on Plat, each character leaves the party and independently travels to Lion's Arch. The reference script supplies the NPC location (5267, 9070), dialogs `0x846303`, `0x846301`, `0x846307`, and alternating districts 1/2. The worker checks both skeleton consumption and ToT bag receipt, banks ToT bags into existing stacks/free storage slots, deposits gold, and changes district before repeating. It stops rather than blindly repeating an unconfirmed reward or deposit.
+
+Valuation uses **inventory gold + storage gold + floor(Captured Skeletons / 3) × 1,000 gold**. Once storage exceeds 800 platinum and that value exceeds 900, the character travels to Embark Beach, locates Duuja by name, obtains fresh quotes, and buys ectoplasm one at a time. Each purchase must increase ectoplasm and decrease gold before another is sent. It stops in the 800–900 platinum band when attainable. If the skeleton value alone exceeds 900, it spends liquid gold until it cannot afford the next quote, then resumes Lion's Arch turn-ins and repeats when storage builds up again. Ectoplasm is retained in inventory and is not counted as liquid platinum.
+
+With 0–2 skeletons left, each account returns to the configured ToA district. The team waits for everyone to finish, clears Empty on Plat flags, reassembles, and resumes farming. Missing seasonal NPCs, unreachable trader, full storage/inventory, stale quotes or unconfirmed transactions produce an Economy Hold instead of an account restart loop. Worker recovery resumes the persisted stage. Starting a new team session reassesses current inventories. NPC interaction, paths, gold access and trading require supervised live testing once available.
+
+Source references: uploaded Skele turn-in script; GwAu3 item/merchant APIs; [Duuja](https://wiki.guildwars.com/wiki/Duuja); [party leadership on leaving](https://wiki.guildwars.com/wiki/Party).
 
 ## Death's Charge and party retention
 
@@ -22,7 +40,7 @@ Leader and followers share the same targeting, cast sequence, repeat-damage loop
 
 The hub dismisses Don't Send crash-report buttons only for tracked Guild Wars processes or configured active game executable paths. External Windows Error Reporting dialogs must include the configured game path. It retries failed accounts up to three times per session, waits for the old worker to exit before relaunching, and respects manual Stop/Pause. Persistent configuration errors remain stopped after the retry limit.
 
-A fully loaded UW map now takes precedence over stale town/travel/preparation phases. Followers keep synchronizing the run number with the leader during the UW readiness check.
+A fully loaded UW map now takes precedence over stale town/travel/preparation phases. Readiness verifies connected party login numbers against locally visible player agents in the current UW instance. Run counters are diagnostic labels and never block a loaded team.
 
 ## Shared status reliability
 
@@ -91,7 +109,7 @@ Original A/Mo template: `OwNS44PTceTQmE4O2kxkRQYh`. Slots: Shadow Sanctuary (Lux
 
 The original local INI is never rewritten. Passwords/email addresses are not copied into settings, session files, logs, source, or releases. Login uses the same command-line mechanism as the supplied working farm. Keep `characters.ini` outside the repository; `.gitignore` also excludes it and Dat files.
 
-Settings, selected rows, rendering preferences, column widths, session registries and logs live under `%LOCALAPPDATA%\SkelefarmHub`. Logs rotate at approximately 5 MiB. Accounts on one Windows PC are supported; cross-PC teams and skeleton turn-in are not implemented.
+Settings, selected rows, rendering preferences, column widths, session registries and logs live under `%LOCALAPPDATA%\SkelefarmHub`. Logs rotate at approximately 5 MiB. Accounts on one Windows PC are supported; cross-PC teams are not implemented. Seasonal turn-ins and trader purchases are implemented but intentionally disabled pending live NPC testing.
 
 ## Run from source
 
@@ -108,7 +126,7 @@ Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe
 Keep these together:
 
 - `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.3.10.exe`
+- `Skelefarm-worker-0.4.0.exe`
 
 The Python worker embeds its versioned x86 bridge. Target PCs need neither Python nor AutoIt once built. Pin the hub executable to the taskbar.
 

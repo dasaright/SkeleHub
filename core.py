@@ -13,7 +13,7 @@ DEFAULT = {
     'launcher': '',
     'accounts': [],
     'teams': {'Team 1': {'region': -2, 'language': 0, 'district': 1,
-                          'assemble_only': False, 'test_mode': True}},
+                          'assemble_only': False, 'test_mode': True, 'funding_rotation': True, 'turnin_enabled': False}},
 }
 
 
@@ -98,6 +98,8 @@ def snapshot(config, team, session_dir: Path):
         'Region': settings['region'], 'Language': settings['language'],
         'District': settings['district'], 'AssembleOnly': int(settings['assemble_only']),
         'TestMode': int(settings.get('test_mode', True)),
+        'FundingRotation': int(settings.get('funding_rotation', True)),
+        'TurnInEnabled': int(settings.get('turnin_enabled', False)),
         'Build': BUILD,
         'SkeletonModel1': 2392, 'SkeletonModel2': 2393, 'GrenthModel': 1995,
     }}
@@ -111,6 +113,7 @@ def snapshot(config, team, session_dir: Path):
                                   'DatPath': a.get('dat_path', ''),
                                   'CryptoSeed': a.get('crypto_seed', 'Encounter_ReBuilt.au3')}
     write_ini(session_dir / 'team.ini', sections)
+    atomic_text(session_dir / 'economy.json', json.dumps(dict(mode='farm', leader=leader['id'], empty=[], epoch=0, generation=0)))
     for a in members:
         write_control(session_dir / (a['id'] + '.command.ini'), mode='run', rendering=a.get('rendering', False))
     return members

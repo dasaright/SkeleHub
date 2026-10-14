@@ -16,6 +16,7 @@ from game_bridge import GameBridge, fields
 TOA, UW = 138, 72
 from farm_build import BUILD, SKILLS, SEQUENCE
 from version import VERSION
+from economy import Economy
 
 
 def process_alive(pid):
@@ -92,6 +93,7 @@ class Worker:
         self.kill_verified = False
         self.combat_started = False
         self.peer_error_since = None
+        self.economy = Economy(self)
 
     def log(self, text):
         if self.log_path.exists() and self.log_path.stat().st_size > 5 * 1024 * 1024:
@@ -137,8 +139,9 @@ class Worker:
                   'Rate': round(self.captures * 3600 / max(1, self.clock() - self.started), 1)}
         for source, destination in [('map', 'Map'), ('region', 'Region'), ('language', 'Language'),
                                     ('district', 'District'), ('party', 'Party'), ('login', 'Login'),
-                                    ('game_pid', 'GamePID')]:
+                                    ('instance', 'Instance'), ('ingame', 'Ingame'), ('visible', 'Visible'), ('is_party_leader', 'IsPartyLeader'), ('game_pid', 'GamePID')]:
             fields[destination] = self.s.get(source, 0)
+        fields.update(self.economy.telemetry())
         write_ini(self.status_path, {'Worker': fields})
 
     def peer(self, account_id):
@@ -169,6 +172,13 @@ class Worker:
         return 0 not in expected and expected == present
 
     def current_entry_leader(self):
+        if 'is_party_leader' in self.s:
+            if self.s['is_party_leader']:
+                return self.id
+            for account_id, peer in self.peers():
+                if peer and int(peer.get('ispartyleader', 0)):
+                    return account_id
+            return None
         if self.s.get('leader') == self.s.get('login'):
             return self.id
         for account_id, peer in self.peers():
@@ -322,6 +332,8 @@ class Worker:
             return True
         if self.phase == 'Paused':
             self.change('Travel', 'Resuming team')
+        if self.economy.tick():
+            return True
         {'Travel': self.travel, 'Prepare': self.prepare, 'Party': self.party, 'Ready': self.party,
          'Move': self.move, 'Entry': self.entry, 'Fight': self.fight, 'Done': self.done,
          'Return': self.return_to_town}.get(self.phase, lambda: None)()
@@ -420,7 +432,7 @@ class Worker:
             return
         if not self.due(3):
             return
-        if self.s.get('leader') == self.s.get('login'):
+        if self.current_entry_leader() == self.id:
             for _, peer in self.peers():
                 if peer and int(peer.get('map', 0)) == TOA and all(int(peer.get(k, -999)) == v for k, v in self.destination.items()):
                     login = int(peer.get('login', 0))
@@ -505,12 +517,13 @@ class Worker:
         self.change('Fight', 'Test: waiting for team to load UW' if self.test_mode else 'Finding Skeleton of Dhuum')
 
     def all_loaded(self):
-        if self.id != self.entry_leader_id:
-            leader = read_status(self.session / (self.entry_leader_id + '.status.ini'))
-            if leader and int(leader.get('map', 0)) == UW and leader.get('phase') in ('Entry', 'Fight', 'Done', 'Return'):
-                self.cycle = int(leader.get('cycle', self.cycle))
+        # A local visible party member proves instance presence. Run counters are
+        # diagnostic labels, never a barrier: party reordering can change entry owner.
         waiting = []
         peer_failed = False
+        cycles = [self.cycle]
+        visible = {int(x) for x in str(self.s.get('visible', '')).split(',') if x}
+        roster = {int(p.split(':')[0]) for p in str(self.s.get('roster', '')).split(',') if p.endswith(':1')}
         for member in self.members:
             if member['id'] == self.id:
                 continue
@@ -519,15 +532,16 @@ class Worker:
             if not peer or not process_alive(peer.get('pid')):
                 waiting.append(name + ': worker unavailable')
                 peer_failed = True
-            elif peer.get('phase') in ('Error', 'Stopped'):
+            elif peer.get('phase') in ('Error', 'Stopped', 'Paused') or peer.get('mode', 'run') != 'run':
                 waiting.append(name + ': needs attention')
                 peer_failed = True
-            elif int(peer.get('map', 0)) != UW:
+            elif int(peer.get('map', 0)) != UW or int(peer.get('instance', 1)) != 1:
                 waiting.append(name + ': loading UW')
-            elif peer.get('phase') not in ('Fight', 'Done', 'Return'):
-                waiting.append(name + ': ' + peer.get('phase', 'starting'))
-            elif int(peer.get('cycle', -1)) != self.cycle:
-                waiting.append(name + ': synchronizing run')
+            elif 'visible' in self.s and (int(peer.get('login', 0)) not in visible or int(peer.get('login', 0)) not in roster):
+                waiting.append(name + ': not visible in this UW party')
+            else:
+                cycles.append(int(peer.get('cycle', 0)))
+        self.cycle = max(cycles)
         if waiting:
             self.state = 'Waiting for team — ' + '; '.join(waiting)
             if peer_failed:
@@ -665,9 +679,9 @@ class Worker:
             self.change('Prepare', 'Checking supplies for next run')
             return
         peers = self.peers()
-        all_done = all(peer and peer.get('phase') == 'Done' and int(peer.get('cycle', -1)) == self.cycle for _, peer in peers)
-        leader = self.peer(self.leader_id) if not self.is_leader else None
-        if (self.is_leader and (all_done or self.elapsed() >= 45)) or (leader and leader.get('phase') == 'Return'):
+        all_done = all(peer and peer.get('phase') == 'Done' and int(peer.get('map', 0)) == UW for _, peer in peers)
+        leader = self.peer(self.entry_leader_id) if self.id != self.entry_leader_id else None
+        if (self.id == self.entry_leader_id and (all_done or self.elapsed() >= 45)) or (leader and leader.get('phase') == 'Return'):
             self.return_sent = False
             self.change('Return', 'Resigning and returning team')
         elif self.elapsed() > 60:
@@ -684,7 +698,7 @@ class Worker:
             self.game.call('resign')
             self.return_sent = True
         interval = 2 if self.test_mode else 3
-        if self.elapsed() >= (2 if self.test_mode else 7) and self.due(interval) and (self.test_mode or self.is_leader):
+        if self.elapsed() >= (2 if self.test_mode else 7) and self.due(interval) and (self.test_mode or self.id == self.entry_leader_id):
             if self.test_mode:
                 self.game.call('resign')
             self.game.call('return')

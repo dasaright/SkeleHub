@@ -5,7 +5,7 @@
 #include "vendor\GwAu3\API\_GwAu3.au3"
 #include "launcher\AccountLaunch.au3"
 $g_b_AutoUpdate = False
-Global $bridgePort = 0, $bridgeToken = "", $bridgeLog = "", $bridgeAttached = False, $bridgeSocket = -1, $bridgeLaunchedPID = 0
+Global $bridgePort = 0, $bridgeToken = "", $bridgeLog = "", $bridgeAttached = False, $bridgeSocket = -1, $bridgeLaunchedPID = 0, $bridgeEctoCost = 0, $bridgeEctoQuote = 0
 For $i = 1 To $CmdLine[0] - 1
     Switch $CmdLine[$i]
         Case "--port"
@@ -104,6 +104,7 @@ Func BridgeDispatch(ByRef $a)
             $reply &= @TAB & "primary=" & Party_GetPartyProfessionInfo(-2, "Primary") & @TAB & "secondary=" & Party_GetPartyProfessionInfo(-2, "Secondary")
             $reply &= @TAB & "smiting=" & Attribute_GetPartyAttributeInfo(14, 0, "BaseLevel") & @TAB & "shadow=" & Attribute_GetPartyAttributeInfo(31, 0, "BaseLevel")
             $reply &= @TAB & "game_pid=" & $g_i_GWProcessId & @TAB & "login=" & Agent_GetAgentInfo(-2, "LoginNumber")
+            $reply &= @TAB & "is_party_leader=" & Int(Party_GetPartyContextInfo("IsPartyLeader"))
             $reply &= @TAB & "party=" & Party_GetMyPartyInfo("PartyID") & @TAB & "leader=" & Party_GetMyPartyPlayerMemberInfo(1, "LoginNumber")
             $reply &= @TAB & "heroes=" & Party_GetMyPartyInfo("ArrayHeroPartyMemberSize") & @TAB & "henchmen=" & Party_GetMyPartyInfo("ArrayHenchmanPartyMemberSize")
             $reply &= @TAB & "region=" & Map_GetCharacterInfo("Region") & @TAB & "language=" & Map_GetCharacterInfo("Language")
@@ -113,6 +114,17 @@ Func BridgeDispatch(ByRef $a)
             For $n = 1 To Party_GetMyPartyInfo("ArrayPlayerPartyMemberSize")
                 If $n > 1 Then $reply &= ","
                 $reply &= Party_GetMyPartyPlayerMemberInfo($n, "LoginNumber") & ":" & Int(Party_GetMyPartyPlayerMemberInfo($n, "IsConnected"))
+            Next
+            $reply &= @TAB & "visible="
+            Local $players = World_GetWorldInfo("PlayerArray"), $playerCount = World_GetWorldInfo("PlayerArraySize"), $visibleCount = 0
+            For $n = 1 To Party_GetMyPartyInfo("ArrayPlayerPartyMemberSize")
+                Local $loginID = Party_GetMyPartyPlayerMemberInfo($n, "LoginNumber")
+                If $loginID <= 0 Or $loginID >= $playerCount Or $players = 0 Then ContinueLoop
+                Local $playerAgent = Memory_Read($players + $loginID * 0x50, "dword")
+                If $playerAgent <= 0 Or Agent_GetAgentPtr($playerAgent) = 0 Then ContinueLoop
+                If $visibleCount > 0 Then $reply &= ","
+                $reply &= $loginID
+                $visibleCount += 1
             Next
             $reply &= @TAB & "skills="
             For $n = 1 To 8
@@ -130,7 +142,7 @@ Func BridgeDispatch(ByRef $a)
             For $bag = 1 To 4
                 $free += Item_GetBagInfo($bag, "EmptySlots")
             Next
-            Return "captured=" & BridgeQuantity(32559) & @TAB & "mobstoppers=" & BridgeQuantity(32558) & @TAB & "free=" & $free & @TAB & "gold=" & Item_GetInventoryInfo("GoldCharacter") & @TAB & "storage_gold=" & Item_GetInventoryInfo("GoldStorage")
+            Return "tot=" & BridgeQuantity(28434) & @TAB & "ecto=" & BridgeQuantity(930) & @TAB & "ecto_stack_room=" & BridgeStackRoom(930) & @TAB & "captured=" & BridgeQuantity(32559) & @TAB & "mobstoppers=" & BridgeQuantity(32558) & @TAB & "free=" & $free & @TAB & "gold=" & Item_GetInventoryInfo("GoldCharacter") & @TAB & "storage_gold=" & Item_GetInventoryInfo("GoldStorage")
         Case "travel"
             Map_MoveMap(Int($a[2]), Int($a[3]), Int($a[4]), Int($a[5]))
         Case "build"
@@ -174,8 +186,33 @@ Func BridgeDispatch(ByRef $a)
             If $item = 0 Then Return "0"
             Agent_ChangeTarget(Int($a[2]))
             Item_UseItem($item)
+        Case "storage"
+            Ui_Xunlai()
         Case "gold"
-            Item_WithdrawGold(1000)
+            Local $amount = 1000
+            If $a[0] >= 2 Then $amount = Int($a[2])
+            $amount = _Min($amount, _Min(Item_GetInventoryInfo("GoldStorage"), 100000 - Item_GetInventoryInfo("GoldCharacter")))
+            If $amount <= 0 Then Return "0"
+            Item_WithdrawGold($amount)
+        Case "deposit"
+            Local $deposit = _Min(Int($a[2]), _Min(Item_GetInventoryInfo("GoldCharacter"), 1000000 - Item_GetInventoryInfo("GoldStorage")))
+            If $deposit <= 0 Then Return "0"
+            Item_DepositGold($deposit)
+        Case "bank"
+            Return BridgeBank(Int($a[2]))
+        Case "npc_near"
+            Return BridgeNpcNear(Number($a[2]), Number($a[3]), Number($a[4]))
+        Case "npc_name"
+            Return BridgeNpcName($a[2])
+        Case "ecto_quote"
+            Return BridgeEctoQuote()
+        Case "ecto_buy"
+            If Int($a[2]) <> $bridgeEctoCost Or $bridgeEctoCost <= 0 Then Return "0"
+            If Merchant_GetTraderQuoteID() <> $bridgeEctoQuote Or Merchant_GetTraderCostValue() <> $bridgeEctoCost Then Return "0"
+            If Item_GetInventoryInfo("GoldCharacter") < $bridgeEctoCost Then Return "0"
+            Core_Enqueue($g_p_TraderBuy, 4)
+            $bridgeEctoCost = 0
+            Return "1"
         Case "resign"
             Chat_SendChat("resign", "/")
         Case "return"
@@ -278,4 +315,89 @@ Func BridgeDecode($text)
         EndIf
     WEnd
     Return BinaryToString(Binary($hex), 4)
+EndFunc
+
+
+Func BridgeStackRoom($model)
+    For $bag = 1 To 4
+        For $slot = 1 To Item_GetBagInfo($bag, "Slots")
+            Local $item = Item_GetItemBySlot($bag, $slot)
+            If $item = 0 Then ContinueLoop
+            If Item_GetItemInfoByItemID($item, "ModelID") = $model And Item_GetItemInfoByItemID($item, "Quantity") < 250 Then Return 1
+        Next
+    Next
+    Return 0
+EndFunc
+
+Func BridgeBank($model)
+    Local $item = BridgeItem($model)
+    If $item = 0 Then Return 1
+    For $bag = $GC_I_INVENTORY_STORAGE1 To $GC_I_INVENTORY_STORAGE14
+        For $slot = 1 To Item_GetBagInfo($bag, "Slots")
+            Local $stored = Item_GetItemBySlot($bag, $slot)
+            If $stored = 0 Then ContinueLoop
+            If Item_GetItemInfoByItemID($stored, "ModelID") <> $model Then ContinueLoop
+            Local $room = 250 - Item_GetItemInfoByItemID($stored, "Quantity")
+            If $room <= 0 Then ContinueLoop
+            Item_MoveItem_($item, $bag, $slot, _Min($room, Item_GetItemInfoByItemID($item, "Quantity")))
+            Return 1
+        Next
+    Next
+    For $bag = $GC_I_INVENTORY_STORAGE1 To $GC_I_INVENTORY_STORAGE14
+        For $slot = 1 To Item_GetBagInfo($bag, "Slots")
+            If Item_GetItemBySlot($bag, $slot) <> 0 Then ContinueLoop
+            Item_MoveItem($item, $bag, $slot)
+            Return 1
+        Next
+    Next
+    Return 0
+EndFunc
+
+Func BridgeNpcNear($x, $y, $radius)
+    Local $best = 0, $distance = $radius
+    For $id = 1 To Agent_GetMaxAgents() - 1
+        If Agent_GetAgentPtr($id) = 0 Then ContinueLoop
+        If Not Agent_GetAgentInfo($id, "IsLivingType") Or Agent_GetAgentInfo($id, "LoginNumber") <> 0 Then ContinueLoop
+        Local $d = Agent_GetDistanceToXY($x, $y, $id)
+        If $d < $distance Then
+            $best = $id
+            $distance = $d
+        EndIf
+    Next
+    Return $best
+EndFunc
+
+Func BridgeNpcName($name)
+    For $id = 1 To Agent_GetMaxAgents() - 1
+        If Agent_GetAgentPtr($id) = 0 Then ContinueLoop
+        If Not Agent_GetAgentInfo($id, "IsLivingType") Or Agent_GetAgentInfo($id, "LoginNumber") <> 0 Then ContinueLoop
+        Local $decoded = Agent_GetAgentInfo($id, "Name")
+        If $decoded = $name Or StringLeft($decoded, StringLen($name) + 2) = $name & " [" Then Return $id
+    Next
+    Return 0
+EndFunc
+
+Func BridgeEctoQuote()
+    $bridgeEctoCost = 0
+    Local $items = Item_GetItemArray()
+    For $i = 1 To $items[0]
+        Local $ptr = $items[$i]
+        If Item_GetItemInfoByPtr($ptr, "ModelID") <> 930 Then ContinueLoop
+        If Memory_Read($ptr + 0xC, "ptr") <> 0 Or Memory_Read($ptr + 0x4, "dword") <> 0 Then ContinueLoop
+        Local $beforeQuote = Merchant_GetTraderQuoteID()
+        Merchant_ClearTraderQuote()
+        DllStructSetData($g_d_RequestQuote, 2, Item_ItemID($ptr))
+        Core_Enqueue($g_p_RequestQuote, 8)
+        Local $started = TimerInit()
+        While TimerDiff($started) < 5000
+            If Merchant_GetTraderQuoteID() <> $beforeQuote And Merchant_IsValidQuote() Then
+                $bridgeEctoCost = Merchant_GetTraderCostValue()
+                $bridgeEctoQuote = Merchant_GetTraderQuoteID()
+                Return $bridgeEctoCost
+            EndIf
+            Sleep(32)
+        WEnd
+        Return 0
+    Next
+    Return 0
 EndFunc

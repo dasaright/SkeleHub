@@ -33,6 +33,8 @@ class QtDesktopTests(unittest.TestCase):
                 window = Desktop()
                 try:
                     self.assertEqual(window.grid.rowCount(), 1)
+                    for key in ('plat', 'storage_plat', 'skeletons', 'funding'):
+                        self.assertIn(key, COLUMNS)
                     self.assertIn('#14171c', STYLE)
                     self.assertIn('#52d4ba', STYLE)
                     self.assertEqual(window.check_button.text(), 'Check for Updates')

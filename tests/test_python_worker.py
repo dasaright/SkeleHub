@@ -51,6 +51,7 @@ class PythonWorkerTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.path = Path(self.directory.name)
         self.config = copy.deepcopy(DEFAULT)
+        self.config['teams']['Team 1']['funding_rotation'] = False
         self.config['accounts'] = [dict(id='one', character='Alpha Farm Char', team='Team 1', leader=True)]
         snapshot(self.config, 'Team 1', self.path)
         self.game, self.clock = FakeGame(), Clock()
@@ -362,6 +363,39 @@ class PythonWorkerTests(unittest.TestCase):
         self.assertEqual(self.worker.phase, 'Move')
         self.assertEqual(self.worker.entry_leader_id, self.worker.id)
         self.assertNotIn(('leave',), self.game.calls)
+
+    def test_loaded_visible_party_does_not_deadlock_on_different_run_counters(self):
+        from core import write_ini
+        self.worker.members.append({'id': 'two', 'character': 'Beta'})
+        self.game.s.update(map=72, instance=1, roster='11:1,22:1', visible='11,22')
+        self.phase('Fight')
+        self.worker.cycle = 4
+        write_ini(self.path / 'two.status.ini', {'Worker': dict(PID=123, Map=72, Instance=1,
+                  Phase='Fight', Cycle=9, Login=22, Mode='run')})
+        with patch('worker.process_alive', return_value=True):
+            self.assertTrue(self.worker.all_loaded())
+        self.assertEqual(self.worker.cycle, 9)
+
+    def test_other_uw_copy_or_invisible_party_member_is_not_marked_loaded(self):
+        from core import write_ini
+        self.worker.members.append({'id': 'two', 'character': 'Beta'})
+        self.game.s.update(map=72, instance=1, roster='11:1,22:1', visible='11')
+        self.phase('Fight')
+        write_ini(self.path / 'two.status.ini', {'Worker': dict(PID=123, Map=72, Instance=1,
+                  Phase='Fight', Cycle=0, Login=22, Mode='run')})
+        with patch('worker.process_alive', return_value=True):
+            self.assertFalse(self.worker.all_loaded())
+        self.assertIn('not visible in this UW party', self.worker.state)
+
+    def test_game_leader_flag_overrides_roster_order(self):
+        from core import write_ini
+        self.worker.members.append({'id': 'two', 'character': 'Beta'})
+        self.game.s.update(is_party_leader=0, leader=11, roster='11:1,22:1')
+        self.phase('Party')
+        write_ini(self.path / 'two.status.ini', {'Worker': dict(PID=123, Phase='Ready', Mode='run',
+                  Login=22, Map=138, IsPartyLeader=1)})
+        with patch('worker.process_alive', return_value=True):
+            self.assertEqual(self.worker.current_entry_leader(), 'two')
 
     def test_combat_test_skips_mobstopper_and_free_slot_gates(self):
         self.phase('Prepare')

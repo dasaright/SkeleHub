@@ -17,8 +17,8 @@ from core import DEFAULT, atomic_text, write_control, read_status
 from qt_style import STYLE
 from version import VERSION
 
-COLUMNS = ('select', 'character', 'team', 'role', 'status', 'render', 'pause', 'resume', 'stop', 'launch', 'runs', 'fails', 'kills', 'captured', 'dat')
-CAPTIONS = ('Select', 'Character', 'Team', 'Role', 'Bot Status', 'Disable Rendering', 'Pause', 'Resume', 'Stop', 'Launch', 'Runs', 'Fails', 'Kills', 'Captured', 'GW Dat')
+COLUMNS = ('select', 'character', 'team', 'role', 'status', 'render', 'pause', 'resume', 'stop', 'launch', 'runs', 'fails', 'kills', 'captured', 'plat', 'storage_plat', 'skeletons', 'funding', 'dat')
+CAPTIONS = ('Select', 'Character', 'Team', 'Role', 'Bot Status', 'Disable Rendering', 'Pause', 'Resume', 'Stop', 'Launch', 'Runs', 'Fails', 'Kills', 'Captured', 'Carried Plat', 'Storage Plat', 'Skeletons', 'Funding', 'GW Dat')
 
 
 class Dialogs:
@@ -77,6 +77,12 @@ class TableAdapter:
         session = self.desktop.sessions.get(account['team'], {})
         status = read_status(Path(session.get('dir', '.')) / (iid + '.status.ini'))
         mapping['kills'] = status.get('kills', '0')
+        mapping['plat'] = f"{int(status.get('gold', 0)) / 1000:g}"
+        mapping['storage_plat'] = f"{int(status.get('storagegold', 0)) / 1000:g}"
+        mapping['skeletons'] = status.get('skeletonsavailable', 0)
+        mapping['funding'] = status.get('fundingstate', '')
+        if status.get('economyleader'):
+            mapping['role'] = 'Leader' if iid == status['economyleader'] else 'Follower'
         for key, value in mapping.items():
             if key not in COLUMNS:
                 continue
@@ -188,7 +194,7 @@ class Desktop(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setMinimumSectionSize(60)
         widths = self.config.get('column_widths', {})
-        defaults = (65, 200, 110, 80, 260, 145, 80, 80, 80, 80, 65, 65, 65, 80, 240)
+        defaults = (65, 200, 110, 80, 260, 145, 80, 80, 80, 80, 65, 65, 65, 80, 100, 100, 85, 140, 240)
         self.loading_widths = True
         for i, key in enumerate(COLUMNS):
             header.resizeSection(i, int(widths.get(key, defaults[i])))

@@ -12,7 +12,7 @@ class WorkerContractTests(unittest.TestCase):
     def test_all_gwau3_calls_exist(self):
         functions = {m.lower() for m in re.findall(r'^Func\s+(\w+)\(', API, re.M | re.I)}
         bridge = (ROOT / 'GwAu3Bridge.au3').read_text()
-        calls = set(re.findall(r'\b((?:Agent|Map|Party|Skill|Item|Game|Chat|Attribute|Core|Ui)_\w+)\(', SOURCE + '\n' + bridge))
+        calls = set(re.findall(r'\b((?:Agent|Map|Party|Skill|Item|Game|Chat|Attribute|Core|Ui|Merchant|World|Memory|Utils)_\w+)\(', SOURCE + '\n' + bridge))
         self.assertGreater(len(calls), 30)
         self.assertEqual(sorted(c for c in calls if c.lower() not in functions), [])
 

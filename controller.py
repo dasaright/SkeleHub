@@ -348,12 +348,14 @@ class Hub:
         r = self.dialog(team, [('region', 'Region (-2 International, 0 America, 2 Europe)', s['region'], None),
                                ('language', 'Language ID (0 English)', s['language'], None),
                                ('district', 'District number', s['district'], None),
-                               ('mode', 'Run mode', 'Assembly only' if s['assemble_only'] else 'Combat test' if s.get('test_mode', True) else 'Farm', ['Combat test', 'Assembly only', 'Farm'])])
+                               ('mode', 'Run mode', 'Assembly only' if s['assemble_only'] else 'Combat test' if s.get('test_mode', True) else 'Farm', ['Combat test', 'Assembly only', 'Farm']),
+                               ('funding', 'Rotate leaders by platinum', 'Yes' if s.get('funding_rotation', True) else 'No', ['Yes', 'No']),
+                               ('turnin', 'Enable seasonal turn-ins (not live tested)', 'Yes' if s.get('turnin_enabled', False) else 'No', ['No', 'Yes'])])
         if not r:
             return
         old = dict(s)
         try:
-            s.update(region=int(r['region']), language=int(r['language']), district=int(r['district']), assemble_only=r['mode'] == 'Assembly only', test_mode=r['mode'] == 'Combat test')
+            s.update(region=int(r['region']), language=int(r['language']), district=int(r['district']), assemble_only=r['mode'] == 'Assembly only', test_mode=r['mode'] == 'Combat test', funding_rotation=r['funding'] == 'Yes', turnin_enabled=r['turnin'] == 'Yes')
             self.save_draft()
         except (ValueError, KeyError) as exc:
             self.config['teams'][team] = old
