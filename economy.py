@@ -122,6 +122,7 @@ class Economy:
                     EmptyPlat=int(bool(self.inv) and empty_on_plat(self.inv)),
                     FundsKnown=int(bool(self.inv)),
                     FundingState='Empty on Plat' if self.inv and empty_on_plat(self.inv) else 'Funded',
+                    LeaderSelected=int(self.shared.get('leader_selected', True)),
                     EconomyMode=self.shared.get('mode', 'farm'), EconomyLeader=self.shared.get('leader', ''),
                     EconomyStage=self.progress.get('stage', ''),
                     EconomyDone=self.progress.get('done_generation', -1),
@@ -135,7 +136,7 @@ class Economy:
 
     def tick(self):
         w = self.w
-        if (not self.enabled or w.assemble_only) and not self.currency_pending:
+        if (not self.enabled or w.assemble_only) and not self.currency_pending and not (w.team.getboolean('AutoLeaderSelection', fallback=False) and not self.shared.get('leader_selected', True)):
             return False
         if w.s.get('instance') != 0:
             return False
@@ -153,7 +154,38 @@ class Economy:
                 w.state = self.hold
                 return True
             return self.handle_currency()
-        if not self.enabled or w.assemble_only:
+        if mode == 'hold' and not self.shared.get('leader_selected', True):
+            w.state = self.shared.get('reason', 'Economy needs attention')
+            if w.phase != 'EconomyHold':
+                w.change('EconomyHold', w.state)
+            return True
+        if w.team.getboolean('AutoLeaderSelection', fallback=False) and not self.shared.get('leader_selected', True) and w.build_verified:
+            if w.s.get('map') != TOA or w.phase not in ('Party', 'Ready'):
+                return False
+            if w.id != w.members[0]['id']:
+                w.state = 'Waiting for initial funded leader selection'
+                return True
+            balances = []
+            for member in w.members:
+                peer = self.telemetry() if member['id'] == w.id else w.peer(member['id'])
+                # Own telemetry uses display casing; peers use INI lowercase.
+                peer = {k.lower(): v for k, v in (peer or {}).items()}
+                if member['id'] != w.id and (not int(peer.get('buildinitialized', 0)) or int(peer.get('map', 0)) != TOA or peer.get('phase') not in ('Party', 'Ready')):
+                    w.state = 'Waiting for team initialization before choosing leader'
+                    return True
+                if not int(peer.get('fundsknown', 0)):
+                    w.state = 'Checking team platinum balances before choosing leader'
+                    return True
+                balances.append((member['id'], int(peer.get('gold', 0)) + int(peer.get('storagegold', 0))))
+            candidate = next((aid for aid, gold in balances if gold >= 5000), None)
+            if not candidate:
+                reason = 'You need to fund at least one member of this team with plat'
+                self.save_shared(mode='hold', reason=reason, leader_selected=False)
+                self.block(reason)
+            else:
+                self.save_shared(mode='rotate', leader=candidate, leader_selected=True, epoch=self.shared['epoch'] + 1)
+            return True
+        if (not self.enabled or w.assemble_only) and self.shared['mode'] != 'rotate':
             return False
         if self.hold:
             w.state = self.hold
@@ -173,6 +205,8 @@ class Economy:
                 return True
             return self.turnin()
         if mode == 'rotate':
+            if not w.build_verified or w.s.get('map') != TOA or w.phase in ('Initialize', 'Travel', 'Prepare'):
+                return False
             epoch = self.shared['epoch']
             if self.applied_epoch != epoch:
                 w.game.call('leave')

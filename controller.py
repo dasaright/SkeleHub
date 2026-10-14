@@ -14,7 +14,7 @@ import urllib.error
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import uuid
-from accounts import read_characters, merge_accounts, validate_install
+from accounts import read_characters, merge_accounts, validate_install, migrate_settings, save_character, character_email
 from windows_recovery import dismiss_crash_dialogs
 from version import VERSION, worker_name
 from updater import check_release, stage_release, apply_and_restart
@@ -137,8 +137,9 @@ class Hub:
         try:
             records = read_characters(path)
             merge_accounts(self.config, records)
+            self.config['characters_ini'] = str(Path(path).resolve())
             self.save_draft()
-            self.notice.set(f'Imported {len(records)} characters. Set teams/leaders and verify each GW executable and Dat path. Credentials remain in the original local file.')
+            self.notice.set(f'Imported {len(records)} characters. Assign teams in the main window and verify each GW executable. Credentials remain in the original local file.')
         except (ValueError, OSError, KeyError) as exc:
             self.config = old
             messagebox.showerror('Import', str(exc))
@@ -289,34 +290,41 @@ class Hub:
             self.account_dialog(next(a for a in self.config['accounts'] if a['id'] == self.table.selection()[0]))
 
     def account_dialog(self, account):
-        a = account or {'id': uuid.uuid4().hex[:12], 'character': '', 'team': 'Team 1', 'leader': False, 'profile': '', 'rendering': False}
+        a = account or dict(id=uuid.uuid4().hex[:12], character='', team='Team 1', leader=False, rendering=True)
         if self.active(a['team']) or self.busy:
             return messagebox.showinfo('Active team', 'Stop this team before editing its configuration.')
+        ini = a.get('characters_ini') or self.config.get('characters_ini') or str(DATA / 'characters.ini')
         result = self.dialog('Account', [
-            ('character', 'Exact character name', a['character'], None),
-            ('team', 'Team (new name creates a team)', a['team'], None),
-            ('role', 'Role', 'Leader' if a['leader'] else 'Follower', ['Leader', 'Follower']),
-            ('launch_mode', 'Launch mode', a.get('launch_mode', 'Attach'), ['Direct', 'Attach', 'Profile']),
-            ('characters_ini', 'Local characters.ini', a.get('characters_ini', ''), '__file__'),
-            ('gw_exe', 'Guild Wars executable', a.get('gw_exe', ''), '__file__'),
-            ('dat_path', 'Gw.dat (same folder as executable)', a.get('dat_path', ''), '__file__'),
-            ('crypto_seed', 'Original encryption script name', a.get('crypto_seed', 'Encounter_ReBuilt.au3'), None),
-            ('profile', 'GW Launcher profile (Profile mode only)', a.get('profile', ''), None),
-            ('rendering', 'Disable rendering', 'Yes' if a.get('rendering') else 'No', ['No', 'Yes']),
+            ('character', 'Character Name', a['character'], None),
+            ('gw_exe', 'Guild Wars Executable', a.get('gw_exe', ''), '__file__'),
+            ('email', 'Account Email', character_email(ini, a.get('section', a['character'])), None),
+            ('password', 'Account Password (blank keeps saved password)', '', None),
         ])
         if not result:
             return
-        if not result['team'] or self.active(result['team']):
-            return messagebox.showerror('Team', 'Use a nonempty team that is stopped.')
         before = copy.deepcopy(self.config)
-        updated = dict(a, character=result['character'], team=result['team'], leader=result['role'] == 'Leader', profile=result['profile'], rendering=result['rendering'] == 'Yes', **{k: result[k] for k in ('launch_mode', 'characters_ini', 'gw_exe', 'dat_path', 'crypto_seed')})
-        self.config['accounts'] = [x for x in self.config['accounts'] if x['id'] != a['id']] + [updated]
-        self.config['teams'].setdefault(result['team'], copy.deepcopy(DEFAULT['teams']['Team 1']))
-        # Permit incomplete teams while editing; full validation occurs at launch.
         try:
+            from pathlib import PureWindowsPath
+            dat = str(PureWindowsPath(result['gw_exe']).with_name('Gw.dat'))
+            validate_install(result['gw_exe'], dat)
+            if not result['email'] or any(c in result['email'] for c in '\r\n'):
+                raise ValueError('Enter an account email.')
+            updated = dict(a, character=result['character'], gw_exe=result['gw_exe'], dat_path=dat,
+                           characters_ini=ini, section=result['character'], launch_mode='Direct',
+                           crypto_seed=a.get('crypto_seed', 'Encounter_ReBuilt.au3'), leader=False,
+                           rendering=a.get('rendering', True))
+            if account:
+                self.config['accounts'] = [updated if x['id'] == a['id'] else x for x in self.config['accounts']]
+            else:
+                self.config['accounts'].append(updated)
+            # Validate before touching credentials; save only metadata to hub settings.
             self.save_draft()
-        except Exception as exc:
+            save_character(ini, result['character'], result['email'], result['gw_exe'],
+                           result['password'], old_section=a.get('section', a['character']))
+            self.notice.set('Account saved. Gw.dat was found beside the executable; credentials saved to characters config.')
+        except (ValueError, OSError) as exc:
             self.config = before
+            self.save_draft()
             messagebox.showerror('Account', str(exc))
 
     def save_draft(self):
@@ -362,8 +370,7 @@ class Hub:
             messagebox.showerror('Settings', str(exc))
 
     def paths(self):
-        r = self.dialog('Program paths', [('autoit', 'AutoIt3.exe (32 bit)', self.config['autoit'], None),
-                                           ('launcher', 'GW Launcher executable (optional)', self.config['launcher'], None)])
+        r = self.dialog('AutoIT Path', [('autoit', 'AutoIt3.exe (32 bit)', self.config['autoit'], '__file__')])
         if r:
             self.config.update(r)
             self.save_draft()
@@ -376,6 +383,9 @@ class Hub:
             selected = set(self.table.selection())
             launch_config = copy.deepcopy(self.config)
             launch_config['accounts'] = [a for a in launch_config['accounts'] if a['id'] in selected]
+            for team in teams:
+                for i, account in enumerate(a for a in launch_config['accounts'] if a['team'] == team):
+                    account['leader'] = i == 0
             validate(launch_config)
             if not (ROOT / worker_name()).exists() and not Path(self.config['autoit']).is_file():
                 raise ValueError('Set the 32-bit AutoIt3.exe path under Paths, or build the versioned worker executable.')

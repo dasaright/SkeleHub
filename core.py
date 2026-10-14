@@ -100,12 +100,12 @@ def snapshot(config, team, session_dir: Path):
         'TestMode': int(settings.get('test_mode', True)),
         'FundingRotation': int(settings.get('funding_rotation', True)),
         'TurnInEnabled': int(settings.get('turnin_enabled', False)),
-        'Build': BUILD,
+        'Build': BUILD, 'AutoLeaderSelection': 1,
         'SkeletonModel1': 2392, 'SkeletonModel2': 2393, 'GrenthModel': 1995,
     }}
     for i, a in enumerate(members, 1):
         sections[f'Member{i}'] = {'ID': a['id'], 'Character': a['character'],
-                                  'DisableRendering': int(a.get('rendering', False)),
+                                  'DisableRendering': int(a.get('rendering', True)),
                                   'LaunchDirect': int(a.get('launch_mode') == 'Direct'),
                                   'CharactersINI': a.get('characters_ini', ''),
                                   'Section': a.get('section', a['character']),
@@ -113,9 +113,9 @@ def snapshot(config, team, session_dir: Path):
                                   'DatPath': a.get('dat_path', ''),
                                   'CryptoSeed': a.get('crypto_seed', 'Encounter_ReBuilt.au3')}
     write_ini(session_dir / 'team.ini', sections)
-    atomic_text(session_dir / 'economy.json', json.dumps(dict(mode='farm', leader=leader['id'], empty=[], epoch=0, generation=0)))
+    atomic_text(session_dir / 'economy.json', json.dumps(dict(mode='farm', leader=leader['id'], empty=[], epoch=0, generation=0, leader_selected=False)))
     for a in members:
-        write_control(session_dir / (a['id'] + '.command.ini'), mode='run', rendering=a.get('rendering', False))
+        write_control(session_dir / (a['id'] + '.command.ini'), mode='run', rendering=a.get('rendering', True))
     return members
 
 

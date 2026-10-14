@@ -92,3 +92,7 @@ Currency handling now visits Eye of the North (map 642) and Roland for both manu
 ## v0.4.3
 
 Detect exited game processes independently of worker error reporting; relaunch into the existing team session and retain Run/Pause. Explicit Stop cancels recovery. Reset consecutive retry allowance after two healthy minutes.
+
+## v0.4.4
+
+Simplified account input to character, executable, email and password; derive and validate sibling Gw.dat. Save credentials only to characters INI with DPAPI for newly entered passwords; preserve Encounter SEC compatibility. Main-window team dropdown supports assignment/create/delete, with Team 1 protected. Roles stay blank before live funded leader selection; initial leader is first funded selected row, with exact no-funds error when none qualify. Enable rendering suppression by default and migrate old metadata/widths once. Remove row Launch; add Launch All and retain Launch Selected. Rename path dialog to AutoIT Path. Account edits preserve row order. Tests cover saved settings, credential preservation and Windows/native DPAPI compatibility, Qt account/team controls, initial funding selection, and existing farm/update behavior.

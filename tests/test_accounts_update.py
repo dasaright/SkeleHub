@@ -165,3 +165,76 @@ class DownloadAndHandoffTests(unittest.TestCase):
             self.assertIn('-HubPid', args)
             self.assertIn('1234', args)
             self.assertNotIn('Stop-Process', ' '.join(args))
+
+class AccountSetupTests(unittest.TestCase):
+    def test_migration_preserves_order_and_team_but_derives_dat_and_defaults_rendering(self):
+        from accounts import migrate_settings
+        config = copy.deepcopy(DEFAULT)
+        config['teams']['Other'] = copy.deepcopy(DEFAULT['teams']['Team 1'])
+        config['accounts'] = [dict(id='first', character='First', team='Other', leader=True,
+                                   rendering=False, gw_exe=r'C:\GW\Gw.exe', dat_path='old'),
+                              dict(id='next', character='Next', team='Team 1', leader=False)]
+        migrate_settings(config)
+        self.assertEqual([a['id'] for a in config['accounts']], ['first', 'next'])
+        self.assertEqual(config['accounts'][0]['team'], 'Other')
+        self.assertEqual(config['accounts'][0]['dat_path'], r'C:\GW\Gw.dat')
+        self.assertTrue(all(a['rendering'] for a in config['accounts']))
+        self.assertFalse(any(a['leader'] for a in config['accounts']))
+        config['accounts'][0]['rendering'] = False
+        migrate_settings(config)
+        self.assertFalse(config['accounts'][0]['rendering'])
+
+    def test_character_save_preserves_other_accounts_and_protects_password(self):
+        from accounts import save_character, character_email
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'characters.ini'
+            path.write_text('[Other]\nEmail=other@example.invalid\nPwd={SEC}original\nFilePath=old\n', encoding='utf-16')
+            save_character(path, 'New Character', 'new@example.invalid', r'C:\GW\Gw.exe', ' secret ',
+                           protector=lambda value: '{DPAPI}' + value.encode().hex())
+            self.assertEqual(character_email(path, 'New Character'), 'new@example.invalid')
+            text = path.read_text(encoding='utf-16')
+            self.assertIn('Pwd={SEC}original', text)
+            self.assertNotIn(' secret ', text)
+            save_character(path, 'Renamed', 'new@example.invalid', r'C:\GW\Gw.exe', old_section='New Character')
+            self.assertNotIn('[New Character]', path.read_text(encoding='utf-16'))
+            self.assertEqual(len(read_characters(path)), 2)
+
+    @unittest.skipUnless(__import__('os').name == 'nt', 'DPAPI requires Windows')
+    def test_windows_password_protection_round_trip(self):
+        import ctypes
+        from ctypes import wintypes
+        from accounts import protect_password
+        protected = protect_password(' synthetic password Ω ')
+        self.assertTrue(protected.startswith('{DPAPI}'))
+        raw = bytes.fromhex(protected[7:])
+        class Blob(ctypes.Structure):
+            _fields_ = [('size', wintypes.DWORD), ('data', ctypes.c_void_p)]
+        buf = ctypes.create_string_buffer(raw)
+        source, target = Blob(len(raw), ctypes.cast(buf, ctypes.c_void_p)), Blob()
+        api = ctypes.windll.crypt32.CryptUnprotectData
+        api.argtypes = [ctypes.POINTER(Blob), ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(Blob)]
+        api.restype = wintypes.BOOL
+        self.assertTrue(api(ctypes.byref(source), None, None, None, None, 1, ctypes.byref(target)))
+        try:
+            self.assertEqual(ctypes.string_at(target.data, target.size).decode(), ' synthetic password Ω ')
+        finally:
+            ctypes.windll.kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+            ctypes.windll.kernel32.LocalFree(target.data)
+
+    @unittest.skipUnless(__import__('os').name == 'nt', 'Native credential compatibility requires Windows')
+    def test_native_launcher_decrypts_new_password_format(self):
+        import os
+        import subprocess
+        from accounts import protect_password
+        autoit = Path(os.environ.get('ProgramFiles(x86)', 'C:/Program Files (x86)')) / 'AutoIt3/AutoIt3.exe'
+        if not autoit.is_file():
+            self.skipTest('AutoIt is installed by the release build')
+        repo = Path(__file__).resolve().parents[1]
+        protected = protect_password('synthetic Ω password')
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / 'check.au3'
+            script.write_text('#include "' + str(repo / 'vendor/GwAu3/API/_GwAu3.au3') + '"\n#include "' + str(repo / 'launcher/AccountLaunch.au3') + '"\n' +
+                              'Local $plain = Security_DecryptString("' + protected + '", "ignored")\n' +
+                              'If @error Then Exit 2\nIf $plain <> "synthetic Ω password" Then Exit 3\nExit 0\n', encoding='utf-8-sig')
+            result = subprocess.run([str(autoit), '/ErrorStdOut', str(script)], capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stdout.decode(errors='replace'))

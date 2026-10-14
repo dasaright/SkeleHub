@@ -51,7 +51,7 @@ class EconomyWorkflowTests(unittest.TestCase):
         self.peer(gold=50000, storage=0)
 
     def peer(self, gold=0, storage=0, **extra):
-        data = dict(PID=123, Mode='run', Map=138, Phase='Ready', Login=22, FundsKnown=1,
+        data = dict(PID=123, Mode='run', Map=138, Phase='Ready', Login=22, FundsKnown=1, BuildInitialized=1,
                     Gold=gold, StorageGold=storage, Region=-2, Language=0, District=1, Instance=0, EmptyPlat=int(gold < 5000 and storage == 0))
         data.update(extra)
         write_ini(self.path / 'two.status.ini', {'Worker': data})
@@ -67,6 +67,36 @@ class EconomyWorkflowTests(unittest.TestCase):
         with patch('worker.process_alive', return_value=True):
             return self.e.tick()
 
+    def test_initial_leader_uses_topmost_funded_account(self):
+        self.worker.build_verified = True
+        self.game.inv.update(gold=0, storage_gold=0)
+        self.peer(gold=7000)
+        self.assertTrue(self.tick())
+        shared = self.e.read_shared()
+        self.assertTrue(shared['leader_selected'])
+        self.assertEqual(shared['leader'], 'two')
+        self.assertEqual(shared['mode'], 'rotate')
+
+    def test_initial_leader_keeps_topmost_when_funded(self):
+        self.worker.build_verified = True
+        self.game.inv.update(gold=0, storage_gold=20000)
+        self.assertTrue(self.tick())
+        self.assertEqual(self.e.read_shared()['leader'], 'one')
+        self.assertTrue(self.e.read_shared()['leader_selected'])
+
+    def test_initial_leader_requires_known_balances_and_errors_when_all_empty(self):
+        self.worker.build_verified = True
+        self.game.inv.update(gold=0, storage_gold=0)
+        self.peer(FundsKnown=0)
+        self.assertTrue(self.tick())
+        self.assertFalse(self.e.read_shared()['leader_selected'])
+        self.peer(gold=0, storage=0)
+        self.assertTrue(self.tick())
+        shared = self.e.read_shared()
+        self.assertEqual(shared['mode'], 'hold')
+        self.assertEqual(shared['reason'], 'You need to fund at least one member of this team with plat')
+        self.assertFalse(shared['leader_selected'])
+
     def test_refill_to_twenty_then_keep_leading_without_storage(self):
         self.game.inv.update(gold=7000, storage_gold=30000)
         self.assertTrue(self.tick())
@@ -78,6 +108,8 @@ class EconomyWorkflowTests(unittest.TestCase):
         self.assertEqual(self.e.read_shared()['mode'], 'farm')
 
     def test_empty_leader_rotates_to_funded_follower(self):
+        self.shared(leader_selected=True)
+        self.worker.build_verified = True
         self.game.inv.update(gold=4000, storage_gold=0)
         self.assertTrue(self.tick())
         state = self.e.read_shared()

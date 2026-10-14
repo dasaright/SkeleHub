@@ -12,14 +12,14 @@ from PySide6.QtCore import Qt, QTimer, QSignalBlocker
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QFileDialog, QMessageBox, QDialog, QFormLayout, QLineEdit,
-    QComboBox, QDialogButtonBox)
+    QComboBox, QDialogButtonBox, QInputDialog)
 import controller as engine
 from core import DEFAULT, atomic_text, write_control, read_status
 from qt_style import STYLE
 from version import VERSION
 
-COLUMNS = ('select', 'character', 'team', 'role', 'status', 'render', 'pause', 'resume', 'stop', 'launch', 'currency', 'runs', 'fails', 'kills', 'captured', 'plat', 'storage_plat', 'skeletons', 'funding', 'dat')
-CAPTIONS = ('Select', 'Character', 'Team', 'Role', 'Bot Status', 'Disable Rendering', 'Pause', 'Resume', 'Stop', 'Launch', 'Handle Currency', 'Runs', 'Fails', 'Kills', 'Captured', 'Carried Plat', 'Storage Plat', 'Skeletons', 'Funding', 'GW Dat')
+COLUMNS = ('select', 'character', 'team', 'role', 'status', 'render', 'pause', 'resume', 'stop', 'currency', 'runs', 'fails', 'kills', 'captured', 'plat', 'storage_plat', 'skeletons', 'funding', 'dat')
+CAPTIONS = ('Select', 'Character', 'Team', 'Role', 'Bot Status', 'Disable Rendering', 'Pause', 'Resume', 'Stop', 'Handle Currency', 'Runs', 'Fails', 'Kills', 'Captured', 'Carried Plat', 'Storage Plat', 'Skeletons', 'Funding', 'GW Dat')
 
 
 class Dialogs:
@@ -67,6 +67,7 @@ class TableAdapter:
         self.desktop.add_row(iid)
         self.item(iid, values=values)
     def delete(self, iid):
+        self.desktop.widgets.pop(iid, None)
         self.desktop.grid.removeRow(self.desktop.rows.pop(iid))
         self.desktop.reindex()
     def item(self, iid, values=None):
@@ -82,10 +83,15 @@ class TableAdapter:
         mapping['storage_plat'] = f"{int(status.get('storagegold', 0)) / 1000:g}"
         mapping['skeletons'] = status.get('skeletonsavailable', 0)
         mapping['funding'] = status.get('fundingstate', '')
-        if status.get('economyleader'):
+        mapping['role'] = ''
+        if engine.alive(session.get('pids', {}).get(iid)) and status.get('leaderselected', '1') == '1' and status.get('economyleader'):
+
             mapping['role'] = 'Leader' if iid == status['economyleader'] else 'Follower'
         for key, value in mapping.items():
             if key not in COLUMNS:
+                continue
+            if key == 'team':
+                self.desktop.sync_team_selector(iid)
                 continue
             index = COLUMNS.index(key)
             item = self.desktop.grid.item(row, index)
@@ -95,7 +101,7 @@ class TableAdapter:
             item.setText(str(value))
         checkbox = self.desktop.widgets[iid]['render']
         with QSignalBlocker(checkbox):
-            checkbox.setChecked(bool(int(status.get('renderingdisabled', int(account.get('rendering', False))))))
+            checkbox.setChecked(bool(int(status.get('renderingdisabled', int(account.get('rendering', True))))))
 
 
 class Desktop(QMainWindow):
@@ -138,6 +144,8 @@ class Desktop(QMainWindow):
                 self.sessions = json.loads(engine.SESSIONS.read_text())
         except (OSError, ValueError) as exc:
             Dialogs.showerror('Settings', str(exc))
+        engine.migrate_settings(self.config)
+        self.save_draft()
         # Apply the user's requested temporary scenario once; later manual mode choices persist.
         if self.config.get('scenario_revision') != 1:
             for settings in self.config['teams'].values():
@@ -176,7 +184,7 @@ class Desktop(QMainWindow):
         outer.addLayout(toolbar)
         for label, callback in [('Import characters.ini', self.import_characters), ('Add Account', self.add),
                                 ('Edit Account', self.edit), ('Remove', self.remove),
-                                ('Team Settings', self.team_settings), ('GW Paths', self.paths),
+                                ('Team Settings', self.team_settings), ('AutoIT Path', self.paths),
                                 ('Select All', lambda: self.select_all(True)), ('Clear Selection', lambda: self.select_all(False)),
                                 ('Fit Columns', self.fit_columns)]:
             button = QPushButton(label)
@@ -195,7 +203,7 @@ class Desktop(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setMinimumSectionSize(60)
         widths = self.config.get('column_widths', {})
-        defaults = (65, 200, 110, 80, 260, 145, 80, 80, 80, 80, 140, 65, 65, 65, 80, 100, 100, 85, 140, 240)
+        defaults = (65, 200, 110, 80, 260, 145, 80, 80, 80, 140, 65, 65, 65, 80, 100, 100, 85, 140, 240)
         self.loading_widths = True
         for i, key in enumerate(COLUMNS):
             header.resizeSection(i, int(widths.get(key, defaults[i])))
@@ -205,7 +213,7 @@ class Desktop(QMainWindow):
         self.table = TableAdapter(self)
         footer = QHBoxLayout()
         outer.addLayout(footer)
-        for label, callback in [('Launch Selected', self.launch), ('Pause Teams', lambda: self.command('pause')),
+        for label, callback in [('Launch All', self.launch_all), ('Launch Selected', self.launch), ('Pause Teams', lambda: self.command('pause')),
                                 ('Resume Teams', lambda: self.command('run')), ('Stop Teams', lambda: self.command('stop')),
                                 ('Handle Currency Selected', self.handle_currency_selected), ('Open Logs', self.logs)]:
             button = QPushButton(label)
@@ -242,7 +250,7 @@ class Desktop(QMainWindow):
         for key in ('select', 'render'):
             checkbox = QCheckBox()
             account = next(a for a in self.config['accounts'] if a['id'] == account_id)
-            checkbox.setChecked(account_id in self.checked if key == 'select' else account.get('rendering', False))
+            checkbox.setChecked(account_id in self.checked if key == 'select' else account.get('rendering', True))
             if key == 'select':
                 checkbox.toggled.connect(lambda enabled, aid=account_id: self.set_selected(aid, enabled))
             else:
@@ -254,12 +262,74 @@ class Desktop(QMainWindow):
             layout.addWidget(checkbox)
             self.grid.setCellWidget(row, COLUMNS.index(key), holder)
             self.widgets[account_id][key] = checkbox
-        for key in ('pause', 'resume', 'stop', 'launch', 'currency'):
+        combo = QComboBox()
+        self.widgets[account_id]['team'] = combo
+        self.grid.setCellWidget(row, COLUMNS.index('team'), combo)
+        self.sync_team_selector(account_id)
+        combo.activated.connect(lambda index, aid=account_id: self.choose_team(aid))
+        for key in ('pause', 'resume', 'stop', 'currency'):
             button = QPushButton('Handle Currency' if key == 'currency' else key.title())
             if key == 'currency':
                 button.setToolTip('Test the Eye of the North ectoplasm handler using the existing 800–900 platinum valuation rules. Runs after returning to an outpost.')
             button.clicked.connect(lambda checked=False, action=key, aid=account_id: self.row_action(aid, action))
             self.grid.setCellWidget(row, COLUMNS.index(key), button)
+
+    def sync_team_selector(self, account_id):
+        account = next(a for a in self.config['accounts'] if a['id'] == account_id)
+        combo = self.widgets[account_id]['team']
+        choices = list(self.config['teams']) + ['Create Team', 'Delete Team']
+        with QSignalBlocker(combo):
+            if [combo.itemText(i) for i in range(combo.count())] != choices:
+                combo.clear()
+                combo.addItems(choices)
+            combo.setCurrentText(account['team'])
+
+    def choose_team(self, account_id):
+        account = next(a for a in self.config['accounts'] if a['id'] == account_id)
+        choice = self.widgets[account_id]['team'].currentText()
+        before = copy.deepcopy(self.config)
+        try:
+            if self.busy or self.active(account['team']):
+                raise ValueError('Stop the team before changing its membership.')
+            if choice == 'Create Team':
+                name, ok = QInputDialog.getText(self, 'Create Team', 'Team name')
+                if not ok:
+                    return
+                name = name.strip()
+                if not name or name in self.config['teams'] or name in ('Create Team', 'Delete Team') or any(c in name for c in '\r\n'):
+                    raise ValueError('Use a unique, nonempty team name.')
+                self.config['teams'][name] = copy.deepcopy(DEFAULT['teams']['Team 1'])
+                account['team'] = name
+            elif choice == 'Delete Team':
+                team = account['team']
+                if team == 'Team 1':
+                    raise ValueError('Must have at least one team')
+                if self.active('Team 1'):
+                    raise ValueError('Stop Team 1 before moving accounts into it.')
+                for member in self.config['accounts']:
+                    if member['team'] == team:
+                        member['team'] = 'Team 1'
+                del self.config['teams'][team]
+                self.sessions.pop(team, None)
+            else:
+                if self.active(choice):
+                    raise ValueError('Stop the destination team before moving accounts into it.')
+                account['team'] = choice
+            self.persist()
+        except (ValueError, OSError) as exc:
+            self.config = before
+            Dialogs.showerror('Team', str(exc))
+        finally:
+            for aid in self.widgets:
+                self.sync_team_selector(aid)
+
+    def launch_all(self):
+        previous = self.checked
+        self.checked = {a['id'] for a in self.config['accounts']}
+        try:
+            self.launch()
+        finally:
+            self.checked = previous
 
     def set_selected(self, account_id, enabled):
         self.checked.add(account_id) if enabled else self.checked.discard(account_id)
@@ -354,6 +424,8 @@ class Desktop(QMainWindow):
                 widget.setCurrentText(str(value))
             else:
                 widget = QLineEdit(str(value))
+                if key == 'password':
+                    widget.setEchoMode(QLineEdit.EchoMode.Password)
             controls[key] = widget
             if choices == '__file__':
                 row = QWidget()
@@ -381,7 +453,7 @@ class Desktop(QMainWindow):
         layout.addWidget(buttons)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
-        return {key: (widget.currentText() if isinstance(widget, QComboBox) else widget.text()).strip() for key, widget in controls.items()}
+        return {key: (widget.currentText() if isinstance(widget, QComboBox) else widget.text()) if key == 'password' else (widget.currentText() if isinstance(widget, QComboBox) else widget.text()).strip() for key, widget in controls.items()}
 
     def closeEvent(self, event):
         if not self.force_close and (self.busy or self.update_busy):

@@ -6,6 +6,21 @@ Global Const $GC_S_SEC_TAG = "{SEC}"
 Global Const $GC_S_SEC_TAG_LE = StringLen($GC_S_SEC_TAG)
 Func Security_DecryptString($a_s_Crypt, $a_s_Seed)
     If Not IsString($a_s_Crypt) Then Return $a_s_Crypt
+    If StringLeft($a_s_Crypt, 7) = "{DPAPI}" Then
+        Local $raw = Binary("0x" & StringMid($a_s_Crypt, 8))
+        Local $buffer = DllStructCreate("byte[" & BinaryLen($raw) & "]")
+        DllStructSetData($buffer, 1, $raw)
+        Local $input = DllStructCreate("dword size;ptr data"), $output = DllStructCreate("dword size;ptr data")
+        DllStructSetData($input, "size", BinaryLen($raw))
+        DllStructSetData($input, "data", DllStructGetPtr($buffer))
+        Local $result = DllCall("crypt32.dll", "bool", "CryptUnprotectData", "struct*", $input, "ptr", 0, "ptr", 0, "ptr", 0, "ptr", 0, "dword", 1, "struct*", $output)
+        If @error Then Return SetError(2, 0, "")
+        If Not $result[0] Then Return SetError(2, 0, "")
+        Local $plain = DllStructCreate("byte[" & DllStructGetData($output, "size") & "]", DllStructGetData($output, "data"))
+        Local $text = BinaryToString(DllStructGetData($plain, 1), $SB_UTF8)
+        DllCall("kernel32.dll", "handle", "LocalFree", "ptr", DllStructGetData($output, "data"))
+        Return $text
+    EndIf
     If StringLeft($a_s_Crypt, $GC_S_SEC_TAG_LE) <> $GC_S_SEC_TAG Then Return $a_s_Crypt
 
     Local $l_s_Hex = "0x" & StringMid($a_s_Crypt, $GC_S_SEC_TAG_LE + 1)

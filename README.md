@@ -1,4 +1,4 @@
-# Skelefarm Hub / Python SkeleBot — v0.4.3
+# Skelefarm Hub / Python SkeleBot — v0.4.4
 
 A Windows Python hub and Python farm controller for selected Guild Wars accounts. The desktop uses EncounterHub's PySide6 implementation pattern and the same charcoal/teal stylesheet, checkboxes, per-row controls, and saved column widths.
 
@@ -67,7 +67,7 @@ The original farm template is loaded in the outpost after confirming Assassin pr
 Combat test is enabled automatically once when moving to this version. It preserves Farm and Assembly-only modes under **Team Settings**.
 
 1. Selected characters travel to the same Temple of the Ages town, region, language, and district.
-2. The configured leader forms the exact selected team. Followers accept that leader.
+2. The first funded account in row order becomes the assembly leader and forms the exact selected team. Followers accept that leader.
 3. The current in-game party leader runs to the Grenth statue, kneels, and requests UW entry.
 4. Accounts wait for the team to load UW, move to the Skeleton of Dhuum, and kill it using the original build/skill sequence plus normal attacks.
 5. Each worker verifies the skeleton is dead, waits **two seconds**, then resigns.
@@ -80,11 +80,11 @@ Stop/relaunch a team to move existing workers onto the new Python controller and
 
 ## Rendering and controls
 
-Each row has **Select**, character/team/role, live status, **Disable Rendering**, Pause, Resume, Stop, Launch, and statistics. Column widths can be resized and are saved; **Fit Columns** resets the layout.
+Each row has **Select**, character/team/role, live status, **Disable Rendering**, Pause, Resume, Stop, Handle Currency, and statistics. Column widths can be resized and are saved; **Fit Columns** resets the layout.
 
-**Disable Rendering** is a live checkbox and a saved account preference. It follows Encounter ReBuilt's implementation: compare the requested setting with `Ui_GetRenderDisabled()`, then use `Ui_ToggleRendering()` only when they differ. Disabling also hides the GW window and clears memory; enabling shows it again. Worker cleanup restores rendering and shows its client.
+**Disable Rendering** defaults to enabled and is a live checkbox and saved account preference. The account-setup migration enables it once for existing accounts; later manual choices persist. It follows Encounter ReBuilt's implementation: compare the requested setting with `Ui_GetRenderDisabled()`, then use `Ui_ToggleRendering()` only when they differ. Disabling also hides the GW window and clears memory; enabling shows it again. Worker cleanup restores rendering and shows its client.
 
-Rendering changes preserve pause/run state. Pause/Resume row buttons act on the account's team. Stop on a row closes only that account's client and worker; Stop Teams closes all accounts in the selected teams. Launch on a single follower row requires selecting its leader as well through **Launch Selected**.
+Rendering changes preserve pause/run state. Pause/Resume row buttons act on the account's team. Stop on a row closes only that account's client and worker; Stop Teams closes all accounts in the selected teams. Use **Launch All** or **Launch Selected** at the bottom; there are no per-row Launch buttons.
 
 - **Pause:** finish the current run, then wait in an outpost.
 - **Resume:** resume assembly/entry using the same session roster.
@@ -107,11 +107,11 @@ Original A/Mo template: `OwNS44PTceTQmE4O2kxkRQYh`. Slots: Shadow Sanctuary (Lux
 ## Accounts, executables and Dat files
 
 1. Import your local **characters.ini**.
-2. Edit each account's team, Leader/Follower role, launch mode, GW executable and Dat file.
+2. Use **Add Account** with Character Name, Guild Wars Executable, Account Email and Account Password. Gw.dat is discovered beside Gw.exe. Editing preserves a saved password when the password input is blank. Credentials are saved to the imported characters config, or `%LOCALAPPDATA%\SkelefarmHub\characters.ini` for new setups; passwords entered here use Windows user-bound DPAPI. Existing Encounter `{SEC}` passwords remain supported. Never publish your characters config.
 3. Choose `Gw.exe` and `Gw.dat` from the same installation folder. Browsing to a Dat selects the sibling executable when present. Large Dat files are never copied or relinked.
-4. Select the accounts to launch, including exactly one leader per selected team. Only selected accounts form the launch roster.
+4. Assign teams using the Team dropdown in each row. It includes **Create Team** and **Delete Team**; deleting a team moves its accounts to Team 1. Team 1 cannot be deleted ("Must have at least one team"). Stop affected teams before changing membership. Launch All starts every account; Launch Selected starts only checked rows. Role stays blank until a funded leader is selected after login. The first account in row order with at least 5 platinum across inventory and storage becomes leader. If none qualify: "You need to fund at least one member of this team with plat". Fund an account and restart that team.
 
-**Direct** mode reads the local INI's `Email`, `Pwd`, and `FilePath`. It supports Encounter's `{SEC}` encryption, defaulting to `Encounter_ReBuilt.au3` and falling back to `Encounter_ReBuilt.exe`; enter the exact original encryption filename if yours was renamed. **Attach** uses an already logged-in character. **Profile** uses the earlier external GW Launcher's `-launch` interface.
+New accounts use **Direct** mode, which reads the local INI's `Email`, `Pwd`, and `FilePath`. It supports Encounter's `{SEC}` encryption, defaulting to `Encounter_ReBuilt.au3` and falling back to `Encounter_ReBuilt.exe`; previously configured encryption seeds are preserved. **Attach** uses an already logged-in character. **Profile** uses the earlier external GW Launcher's `-launch` interface.
 
 The original local INI is never rewritten. Passwords/email addresses are not copied into settings, session files, logs, source, or releases. Login uses the same command-line mechanism as the supplied working farm. Keep `characters.ini` outside the repository; `.gitignore` also excludes it and Dat files.
 
@@ -125,14 +125,14 @@ Install Python 3.11+ and 32-bit AutoIt 3.3.16.1+, then:
 py -3 -m pip install -r requirements.txt
 ```
 
-Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe` path under **GW Paths** if needed. The desktop and farm run in Python; the source bridge runs through AutoIt.
+Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe` path under **AutoIT Path** if needed. The desktop and farm run in Python; the source bridge runs through AutoIt.
 
 ## Executables, updates and releases
 
 Keep these together:
 
 - `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.4.3.exe`
+- `Skelefarm-worker-0.4.4.exe`
 
 The Python worker embeds its versioned x86 bridge. Target PCs need neither Python nor AutoIt once built. Pin the hub executable to the taskbar.
 

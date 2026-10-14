@@ -46,7 +46,9 @@ class QtDesktopTests(unittest.TestCase):
                     window.select_all(True)
                     self.assertEqual(window.table.selection(), ('one',))
                     self.assertIsNotNone(window.grid.cellWidget(0, COLUMNS.index('pause')))
-                    self.assertIsNotNone(window.grid.cellWidget(0, COLUMNS.index('launch')))
+                    self.assertNotIn('launch', COLUMNS)
+                    self.assertIsNotNone(window.grid.cellWidget(0, COLUMNS.index('team')))
+                    self.assertEqual(window.grid.item(0, COLUMNS.index('role')).text(), '')
                     from worker import read_ini
                     from PySide6.QtWidgets import QPushButton
                     session = root / 'test-session'
@@ -68,6 +70,51 @@ class QtDesktopTests(unittest.TestCase):
                     shot = os.environ.get('SKELEHUB_PREVIEW')
                     if shot:
                         window.grab().save(shot)
+                finally:
+                    window.force_close = True
+                    window.close()
+                    self.app.processEvents()
+
+    def test_team_dropdown_create_move_delete_and_account_inputs(self):
+        import copy
+        import json
+        import controller
+        from desktop import Desktop, COLUMNS
+        from core import DEFAULT, atomic_text
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = copy.deepcopy(DEFAULT)
+            config['accounts'] = [dict(id='one', character='Alpha', team='Team 1', leader=True)]
+            settings, sessions = root / 'settings.json', root / 'sessions.json'
+            atomic_text(settings, json.dumps(config))
+            with patch.object(controller, 'CONFIG', settings), patch.object(controller, 'SESSIONS', sessions), patch.object(controller, 'DATA', root):
+                window = Desktop()
+                try:
+                    combo = window.widgets['one']['team']
+                    combo.setCurrentText('Delete Team')
+                    with patch('desktop.Dialogs.showerror') as error:
+                        window.choose_team('one')
+                        self.assertEqual(error.call_args.args[1], 'Must have at least one team')
+                    combo.setCurrentText('Create Team')
+                    with patch('desktop.QInputDialog.getText', return_value=('Team 2', True)):
+                        window.choose_team('one')
+                    self.assertEqual(window.config['accounts'][0]['team'], 'Team 2')
+                    self.assertIn('Team 2', json.loads(settings.read_text())['teams'])
+                    combo.setCurrentText('Delete Team')
+                    window.choose_team('one')
+                    self.assertEqual(window.config['accounts'][0]['team'], 'Team 1')
+                    self.assertNotIn('Team 2', window.config['teams'])
+                    with patch.object(window, 'dialog', return_value=dict(character='Beta', gw_exe=r'C:\GW\Gw.exe', email='test@example.invalid', password=' synthetic ')) as dialog, patch('controller.validate_install'), patch('controller.save_character') as save:
+                        window.add()
+                    self.assertEqual([f[0] for f in dialog.call_args.args[1]], ['character', 'gw_exe', 'email', 'password'])
+                    added = window.config['accounts'][-1]
+                    self.assertEqual(added['dat_path'], r'C:\GW\Gw.dat')
+                    self.assertTrue(added['rendering'])
+                    self.assertEqual(save.call_args.args[4], ' synthetic ')
+                    saved = settings.read_text()
+                    self.assertNotIn('test@example.invalid', saved)
+                    self.assertNotIn('synthetic', saved)
+                    self.assertEqual([a['character'] for a in window.config['accounts']], ['Alpha', 'Beta'])
                 finally:
                     window.force_close = True
                     window.close()

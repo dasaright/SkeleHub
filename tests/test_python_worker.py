@@ -58,6 +58,12 @@ class PythonWorkerTests(unittest.TestCase):
         self.config['teams']['Team 1']['funding_rotation'] = False
         self.config['accounts'] = [dict(id='one', character='Alpha Farm Char', team='Team 1', leader=True)]
         snapshot(self.config, 'Team 1', self.path)
+        # These tests isolate combat/assembly; funding selection has dedicated coverage.
+        import json
+        economy_path = self.path / 'economy.json'
+        shared = json.loads(economy_path.read_text())
+        shared['leader_selected'] = True
+        economy_path.write_text(json.dumps(shared))
         self.game, self.clock = FakeGame(), Clock()
         self.worker = Worker(self.path, 'one', self.game, clock=self.clock)
 
