@@ -6,12 +6,12 @@ $compiler = Join-Path $AutoItDir 'Aut2Exe\Aut2exe.exe'
 if (!(Test-Path $check) -or !(Test-Path $compiler)) { throw 'Install AutoIt (32 bit), or provide -AutoItDir.' }
 & $check '-q' 'GwAu3Bridge.au3'
 if ($LASTEXITCODE -ne 0) { throw 'Au3Check failed. Fix the reported errors before building.' }
-py -3 -m pip install -r requirements.txt -r requirements-build.txt
+python -m pip install -r requirements.txt -r requirements-build.txt
 if ($LASTEXITCODE -ne 0) { throw 'Build dependency installation failed.' }
 $env:QT_QPA_PLATFORM = 'offscreen'
-py -3 -m unittest discover -s tests -v
+python -m unittest discover -s tests -v
 if ($LASTEXITCODE -ne 0) { throw 'Python tests failed.' }
-$version = (py -3 -c 'from version import VERSION; print(VERSION)').Trim()
+$version = (python -c 'from version import VERSION; print(VERSION)').Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Could not read version.' }
 $worker = "Skelefarm-worker-$version.exe"
 $bridge = "GwAu3-bridge-$version.exe"
@@ -20,9 +20,9 @@ Remove-Item (Join-Path 'dist' $bridge) -ErrorAction SilentlyContinue
 $compileArgs = '/in "' + "$PSScriptRoot\GwAu3Bridge.au3" + '" /out "' + "$PSScriptRoot\dist\$bridge" + '" /x86'
 $compiled = Start-Process -FilePath $compiler -ArgumentList $compileArgs -Wait -PassThru
 if ($compiled.ExitCode -ne 0 -or !(Test-Path (Join-Path 'dist' $bridge))) { throw 'Native bridge compilation failed.' }
-py -3 -m PyInstaller --noconfirm --clean --onefile --windowed --name "Skelefarm-worker-$version" --paths . --add-binary "dist\$bridge;." worker.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name "Skelefarm-worker-$version" --paths . --add-binary "dist\$bridge;." worker.py
 if ($LASTEXITCODE -ne 0 -or !(Test-Path (Join-Path 'dist' $worker))) { throw 'Python worker build failed.' }
-py -3 -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name 'Skelefarm Hub' --paths . hub.pyw
+python -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name 'Skelefarm Hub' --paths . hub.pyw
 if ($LASTEXITCODE -ne 0) { throw 'Hub build failed.' }
 Copy-Item README.md, AUDIT.md -Destination dist -Force
 $package = Join-Path $PSScriptRoot "SkeleHub-$version-windows.zip"
