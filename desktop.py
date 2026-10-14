@@ -1,0 +1,378 @@
+"""Qt Skelefarm Hub, using EncounterHub's charcoal/teal stylesheet and row controls."""
+import copy
+import ctypes
+import json
+import os
+from pathlib import Path
+import sys
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from PySide6.QtCore import Qt, QTimer, QSignalBlocker
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QPushButton, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView,
+    QAbstractItemView, QFileDialog, QMessageBox, QDialog, QFormLayout, QLineEdit,
+    QComboBox, QDialogButtonBox)
+import controller as engine
+from core import DEFAULT, atomic_text, write_control, read_status
+from qt_style import STYLE
+from version import VERSION
+
+COLUMNS = ('select', 'character', 'team', 'role', 'status', 'render', 'pause', 'resume', 'stop', 'launch', 'runs', 'fails', 'kills', 'captured', 'dat')
+CAPTIONS = ('Select', 'Character', 'Team', 'Role', 'Bot Status', 'Disable Rendering', 'Pause', 'Resume', 'Stop', 'Launch', 'Runs', 'Fails', 'Kills', 'Captured', 'GW Dat')
+
+
+class Dialogs:
+    @staticmethod
+    def showinfo(title, text):
+        QMessageBox.information(None, title, text)
+    @staticmethod
+    def showerror(title, text):
+        QMessageBox.critical(None, title, text)
+
+
+class Files:
+    @staticmethod
+    def askopenfilename(title='Choose file', filetypes=None, **kwargs):
+        filters = ';;'.join(f'{name} ({pattern})' for name, pattern in (filetypes or [('All files', '*.*')]))
+        return QFileDialog.getOpenFileName(None, title, '', filters)[0]
+
+
+class RootAdapter:
+    def __init__(self, window):
+        self.window = window
+    def after(self, delay, callback):
+        QTimer.singleShot(delay, self.window, callback)
+    def destroy(self):
+        self.window.force_close = True
+        self.window.close()
+
+
+class Notice:
+    def __init__(self, label):
+        self.label = label
+    def set(self, text):
+        self.label.setText(text)
+
+
+class TableAdapter:
+    """Keep the tested account/session controller independent from GUI toolkit."""
+    def __init__(self, desktop):
+        self.desktop = desktop
+    def selection(self):
+        return tuple(a['id'] for a in self.desktop.config['accounts'] if a['id'] in self.desktop.checked)
+    def get_children(self):
+        return tuple(self.desktop.rows)
+    def insert(self, parent, where, iid, values):
+        self.desktop.add_row(iid)
+        self.item(iid, values=values)
+    def delete(self, iid):
+        self.desktop.grid.removeRow(self.desktop.rows.pop(iid))
+        self.desktop.reindex()
+    def item(self, iid, values=None):
+        if values is None:
+            return {}
+        row = self.desktop.rows[iid]
+        mapping = dict(zip(('character', 'team', 'role', 'dat', 'status', 'runs', 'fails', 'captured', 'rate', 'map'), values))
+        account = next(a for a in self.desktop.config['accounts'] if a['id'] == iid)
+        session = self.desktop.sessions.get(account['team'], {})
+        status = read_status(Path(session.get('dir', '.')) / (iid + '.status.ini'))
+        mapping['kills'] = status.get('kills', '0')
+        for key, value in mapping.items():
+            if key not in COLUMNS:
+                continue
+            index = COLUMNS.index(key)
+            item = self.desktop.grid.item(row, index)
+            if item is None:
+                item = QTableWidgetItem()
+                self.desktop.grid.setItem(row, index, item)
+            item.setText(str(value))
+        checkbox = self.desktop.widgets[iid]['render']
+        with QSignalBlocker(checkbox):
+            checkbox.setChecked(bool(int(status.get('renderingdisabled', int(account.get('rendering', False))))))
+
+
+class Desktop(QMainWindow):
+    # The same account/controller reuse pattern as EncounterHub's Qt desktop.
+    import_characters = engine.Hub.import_characters
+    background = engine.Hub.background
+    check_updates = engine.Hub.check_updates
+    update_now = engine.Hub.update_now
+    persist_sessions = engine.Hub.persist_sessions
+    selected_teams = engine.Hub.selected_teams
+    active = engine.Hub.active
+    persist = engine.Hub.persist
+    add = engine.Hub.add
+    edit = engine.Hub.edit
+    account_dialog = engine.Hub.account_dialog
+    save_draft = engine.Hub.save_draft
+    remove = engine.Hub.remove
+    team_settings = engine.Hub.team_settings
+    paths = engine.Hub.paths
+    launch = engine.Hub.launch
+    launch_next = engine.Hub.launch_next
+    command = engine.Hub.command
+    logs = engine.Hub.logs
+    refresh = engine.Hub.refresh
+
+    def __init__(self):
+        super().__init__()
+        engine.messagebox, engine.filedialog = Dialogs, Files
+        self.config = copy.deepcopy(DEFAULT)
+        self.sessions, self.children, self.launch_queue = {}, [], []
+        self.busy = self.update_busy = self.force_close = False
+        self.update_release = None
+        self.pool = ThreadPoolExecutor(max_workers=1)
+        try:
+            if engine.CONFIG.exists():
+                self.config = json.loads(engine.CONFIG.read_text())
+            if engine.SESSIONS.exists():
+                self.sessions = json.loads(engine.SESSIONS.read_text())
+        except (OSError, ValueError) as exc:
+            Dialogs.showerror('Settings', str(exc))
+        # Apply the user's requested temporary scenario once; later manual mode choices persist.
+        if self.config.get('scenario_revision') != 1:
+            for settings in self.config['teams'].values():
+                settings.update(test_mode=True, assemble_only=False)
+            self.config['scenario_revision'] = 1
+            self.save_draft()
+        self.checked = set(self.config.get('selected', []))
+        self.rows, self.widgets = {}, {}
+        self.root = RootAdapter(self)
+        self.setWindowTitle(f'Skelefarm Hub {VERSION}')
+        self.resize(1450, 680)
+        self.setMinimumSize(950, 480)
+        central = QWidget()
+        self.setCentralWidget(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(16, 16, 16, 16)
+        outer.setSpacing(12)
+        top = QHBoxLayout()
+        outer.addLayout(top)
+        title = QLabel('Skelefarm Hub')
+        title.setStyleSheet('font-size:24px;font-weight:600;color:#52d4ba;')
+        top.addWidget(title)
+        top.addWidget(QLabel(f'v{VERSION}  •  Python SkeleBot'))
+        top.addStretch()
+        updates = QVBoxLayout()
+        top.addLayout(updates)
+        self.check_button = QPushButton('Check for Updates')
+        self.check_button.clicked.connect(self.check_updates)
+        updates.addWidget(self.check_button)
+        self.update_button = QPushButton('Update Now')
+        self.update_button.setProperty('primary', True)
+        self.update_button.setEnabled(False)
+        self.update_button.clicked.connect(self.update_now)
+        updates.addWidget(self.update_button)
+        toolbar = QHBoxLayout()
+        outer.addLayout(toolbar)
+        for label, callback in [('Import characters.ini', self.import_characters), ('Add Account', self.add),
+                                ('Edit Account', self.edit), ('Remove', self.remove),
+                                ('Team Settings', self.team_settings), ('GW Paths', self.paths),
+                                ('Select All', lambda: self.select_all(True)), ('Clear Selection', lambda: self.select_all(False)),
+                                ('Fit Columns', self.fit_columns)]:
+            button = QPushButton(label)
+            button.clicked.connect(callback)
+            toolbar.addWidget(button)
+        toolbar.addStretch()
+        self.grid = QTableWidget(0, len(COLUMNS))
+        self.grid.setHorizontalHeaderLabels(CAPTIONS)
+        self.grid.setAlternatingRowColors(True)
+        self.grid.setShowGrid(False)
+        self.grid.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.grid.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.grid.verticalHeader().setVisible(False)
+        self.grid.verticalHeader().setDefaultSectionSize(46)
+        header = self.grid.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        header.setMinimumSectionSize(60)
+        widths = self.config.get('column_widths', {})
+        defaults = (65, 200, 110, 80, 260, 145, 80, 80, 80, 80, 65, 65, 65, 80, 240)
+        self.loading_widths = True
+        for i, key in enumerate(COLUMNS):
+            header.resizeSection(i, int(widths.get(key, defaults[i])))
+        self.loading_widths = False
+        header.sectionResized.connect(self.width_changed)
+        outer.addWidget(self.grid, 1)
+        self.table = TableAdapter(self)
+        footer = QHBoxLayout()
+        outer.addLayout(footer)
+        for label, callback in [('Launch Selected', self.launch), ('Pause Teams', lambda: self.command('pause')),
+                                ('Resume Teams', lambda: self.command('run')), ('Stop Teams', lambda: self.command('stop')),
+                                ('Open Logs', self.logs)]:
+            button = QPushButton(label)
+            if label == 'Launch Selected':
+                button.setProperty('primary', True)
+            button.clicked.connect(callback)
+            footer.addWidget(button)
+        footer.addStretch()
+        label = QLabel('Combat test: no Mobstopper required. Kill skeleton → wait 2 seconds → resign → all accounts return to ToA → repeat.')
+        label.setWordWrap(True)
+        outer.addWidget(label)
+        self.notice = Notice(label)
+        previous_update = engine.DATA / 'last-update.json'
+        if previous_update.is_file():
+            try:
+                report = json.loads(previous_update.read_text(encoding='utf-8-sig'))
+                self.notice.set(report['message'] + (f" Log: {report['log']}" if not report.get('success') else ''))
+                previous_update.unlink()
+            except (ValueError, OSError, KeyError):
+                pass
+        self.refresh()
+
+    def reindex(self):
+        self.rows = {self.grid.item(row, 1).data(Qt.ItemDataRole.UserRole): row for row in range(self.grid.rowCount())}
+
+    def add_row(self, account_id):
+        row = self.grid.rowCount()
+        self.grid.insertRow(row)
+        self.rows[account_id] = row
+        self.widgets[account_id] = {}
+        character = QTableWidgetItem()
+        character.setData(Qt.ItemDataRole.UserRole, account_id)
+        self.grid.setItem(row, 1, character)
+        for key in ('select', 'render'):
+            checkbox = QCheckBox()
+            account = next(a for a in self.config['accounts'] if a['id'] == account_id)
+            checkbox.setChecked(account_id in self.checked if key == 'select' else account.get('rendering', False))
+            if key == 'select':
+                checkbox.toggled.connect(lambda enabled, aid=account_id: self.set_selected(aid, enabled))
+            else:
+                checkbox.toggled.connect(lambda enabled, aid=account_id: self.set_rendering(aid, enabled))
+            holder = QWidget()
+            layout = QHBoxLayout(holder)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(checkbox)
+            self.grid.setCellWidget(row, COLUMNS.index(key), holder)
+            self.widgets[account_id][key] = checkbox
+        for key in ('pause', 'resume', 'stop', 'launch'):
+            button = QPushButton(key.title())
+            button.clicked.connect(lambda checked=False, action=key, aid=account_id: self.row_action(aid, action))
+            self.grid.setCellWidget(row, COLUMNS.index(key), button)
+
+    def set_selected(self, account_id, enabled):
+        self.checked.add(account_id) if enabled else self.checked.discard(account_id)
+        self.config['selected'] = sorted(self.checked)
+        self.save_draft()
+
+    def select_all(self, enabled):
+        for account in self.config['accounts']:
+            aid = account['id']
+            self.set_selected(aid, enabled)
+            if aid in self.widgets:
+                with QSignalBlocker(self.widgets[aid]['select']):
+                    self.widgets[aid]['select'].setChecked(enabled)
+
+    def row_action(self, account_id, action):
+        selected = self.checked
+        self.checked = {account_id}
+        try:
+            if action == 'launch':
+                self.launch()
+            else:
+                self.command({'resume': 'run', 'pause': 'pause', 'stop': 'stop'}[action])
+        finally:
+            self.checked = selected
+
+    def set_rendering(self, account_id, disabled):
+        account = next(a for a in self.config['accounts'] if a['id'] == account_id)
+        account['rendering'] = disabled
+        self.save_draft()
+        session = self.sessions.get(account['team'])
+        if session and account_id in session.get('pids', {}):
+            write_control(Path(session['dir']) / (account_id + '.command.ini'), rendering=disabled)
+        self.notice.set('Rendering preference saved; active account updates immediately. Disabling also hides its GW window.')
+
+    def width_changed(self, index, old, width):
+        if self.loading_widths:
+            return
+        self.config['column_widths'] = {key: self.grid.columnWidth(i) for i, key in enumerate(COLUMNS)}
+        self.save_draft()
+
+    def fit_columns(self):
+        self.loading_widths = True
+        try:
+            self.grid.resizeColumnsToContents()
+            for i, key in enumerate(COLUMNS):
+                self.grid.setColumnWidth(i, max(70, min(300, self.grid.columnWidth(i))))
+            self.grid.setColumnWidth(COLUMNS.index('status'), 260)
+            self.grid.setColumnWidth(COLUMNS.index('character'), 200)
+        finally:
+            self.loading_widths = False
+        self.width_changed(0, 0, 0)
+
+    def dialog(self, title, fields):
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title)
+        layout = QVBoxLayout(dialog)
+        form = QFormLayout()
+        layout.addLayout(form)
+        controls = {}
+        for key, caption, value, choices in fields:
+            if choices and choices != '__file__':
+                widget = QComboBox()
+                widget.addItems(choices)
+                widget.setCurrentText(str(value))
+            else:
+                widget = QLineEdit(str(value))
+            controls[key] = widget
+            if choices == '__file__':
+                row = QWidget()
+                line = QHBoxLayout(row)
+                line.setContentsMargins(0, 0, 0, 0)
+                line.addWidget(widget)
+                browse = QPushButton('Browse…')
+                def choose(checked=False, name=key, target=widget):
+                    suffix = '*.dat' if name == 'dat_path' else '*.ini' if name == 'characters_ini' else '*.exe'
+                    path = QFileDialog.getOpenFileName(dialog, caption, '', f'Files ({suffix});;All files (*.*)')[0]
+                    if path:
+                        target.setText(path)
+                        if name == 'dat_path' and 'gw_exe' in controls:
+                            executable = Path(path).with_name('Gw.exe')
+                            if executable.is_file():
+                                controls['gw_exe'].setText(str(executable))
+                browse.clicked.connect(choose)
+                line.addWidget(browse)
+                form.addRow(caption, row)
+            else:
+                form.addRow(caption, widget)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return {key: (widget.currentText() if isinstance(widget, QComboBox) else widget.text()).strip() for key, widget in controls.items()}
+
+    def closeEvent(self, event):
+        if not self.force_close and (self.busy or self.update_busy):
+            self.notice.set('Wait for the launch/update operation to finish before closing.')
+            event.ignore()
+            return
+        self.pool.shutdown(wait=False)
+        event.accept()  # Workers and clients are deliberately independent of the UI lifetime.
+
+
+def main():
+    app = QApplication(sys.argv)
+    app.setStyleSheet(STYLE)
+    if os.name != 'nt':
+        QMessageBox.critical(None, 'Windows required', 'Skelefarm Hub requires Windows.')
+        return
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        args = [] if getattr(sys, 'frozen', False) else [str(Path(__file__).with_name('hub.pyw'))]
+        result = ctypes.windll.shell32.ShellExecuteW(None, 'runas', sys.executable, subprocess.list2cmdline(args), str(engine.ROOT), 1)
+        if result <= 32:
+            QMessageBox.critical(None, 'Administrator access', 'Start the hub as administrator to attach to Guild Wars.')
+        return
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateMutexW.restype = ctypes.c_void_p
+    mutex = kernel.CreateMutexW(None, False, 'Local\\SkelefarmHubController')
+    if ctypes.get_last_error() == 183:
+        QMessageBox.information(None, 'Skelefarm Hub', 'The hub is already running.')
+        return
+    window = Desktop()
+    window.show()
+    app.exec()
+    kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel.CloseHandle(mutex)

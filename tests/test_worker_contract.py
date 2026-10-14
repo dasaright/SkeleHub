@@ -4,14 +4,15 @@ import re
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = (ROOT / 'Skelefarm.au3').read_text()
+SOURCE = (ROOT / 'legacy/Skelefarm.au3').read_text()
 API = '\n'.join(p.read_text(encoding='utf-8-sig', errors='replace') for p in (ROOT / 'vendor/GwAu3/API').rglob('*.au3'))
 
 
 class WorkerContractTests(unittest.TestCase):
     def test_all_gwau3_calls_exist(self):
         functions = {m.lower() for m in re.findall(r'^Func\s+(\w+)\(', API, re.M | re.I)}
-        calls = set(re.findall(r'\b((?:Agent|Map|Party|Skill|Item|Game|Chat|Attribute|Core|Ui)_\w+)\(', SOURCE))
+        bridge = (ROOT / 'GwAu3Bridge.au3').read_text()
+        calls = set(re.findall(r'\b((?:Agent|Map|Party|Skill|Item|Game|Chat|Attribute|Core|Ui)_\w+)\(', SOURCE + '\n' + bridge))
         self.assertGreater(len(calls), 30)
         self.assertEqual(sorted(c for c in calls if c.lower() not in functions), [])
 

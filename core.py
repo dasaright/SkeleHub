@@ -12,7 +12,7 @@ DEFAULT = {
     'launcher': '',
     'accounts': [],
     'teams': {'Team 1': {'region': -2, 'language': 0, 'district': 1,
-                          'assemble_only': True}},
+                          'assemble_only': False, 'test_mode': True}},
 }
 
 
@@ -87,6 +87,7 @@ def snapshot(config, team, session_dir: Path):
         'Leader': leader['id'], 'Count': len(members), 'Map': 138,
         'Region': settings['region'], 'Language': settings['language'],
         'District': settings['district'], 'AssembleOnly': int(settings['assemble_only']),
+        'TestMode': int(settings.get('test_mode', True)),
         'Build': 'OwNS44PTceTQmE4O2kxkRQYh',
         'SkeletonModel1': 2392, 'SkeletonModel2': 2393, 'GrenthModel': 1995,
     }}
@@ -101,10 +102,23 @@ def snapshot(config, team, session_dir: Path):
                                   'CryptoSeed': a.get('crypto_seed', 'Encounter_ReBuilt.au3')}
     write_ini(session_dir / 'team.ini', sections)
     for a in members:
-        write_ini(session_dir / (a['id'] + '.command.ini'), {'Control': {'Mode': 'run'}})
+        write_control(session_dir / (a['id'] + '.command.ini'), mode='run', rendering=a.get('rendering', False))
     return members
 
 
 def save_config(path, config):
     validate(config)
     atomic_text(path, json.dumps(config, indent=2))
+
+
+def write_control(path, mode=None, rendering=None):
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
+    if path.exists():
+        parser.read(path, encoding='utf-16')
+    values = dict(parser['Control']) if parser.has_section('Control') else {'Mode': 'run'}
+    if mode is not None:
+        values['Mode'] = mode
+    if rendering is not None:
+        values['DisableRendering'] = int(rendering)
+    write_ini(path, {'Control': values})

@@ -1,10 +1,11 @@
+; Archived AutoIt implementation. Current farm logic is worker.py. Not built or launched.
 ; Skelefarm worker v0.1 — rewritten from Skele Bot by Adon and Taco.
 ; Run through Skelefarm Hub. Requires x86 AutoIt and the bundled GwAu3 API.
 #AutoIt3Wrapper_UseX64=n
 #NoTrayIcon
 #RequireAdmin
-#include "vendor\GwAu3\API\_GwAu3.au3"
-#include "launcher\AccountLaunch.au3"
+#include "..\vendor\GwAu3\API\_GwAu3.au3"
+#include "..\launcher\AccountLaunch.au3"
 
 ; Pin the attached API: concurrent workers must never update shared source.
 $g_b_AutoUpdate = False
@@ -41,6 +42,8 @@ Global Const $SF_MOBSTOPPER = 32558, $SF_CAPTURED = 32559
 Global $sfGrenth = Int(IniRead($sfTeam, "Team", "GrenthModel", 1995))
 Global $sfSkeleton1 = Int(IniRead($sfTeam, "Team", "SkeletonModel1", 2392))
 Global $sfSkeleton2 = Int(IniRead($sfTeam, "Team", "SkeletonModel2", 2393))
+Global $sfTestMode = Int(IniRead($sfTeam, "Team", "TestMode", 1))
+Global $sfTestKills = 0, $sfKneelSent = False
 Global $sfAssemblyOnly = Int(IniRead($sfTeam, "Team", "AssembleOnly", 1))
 Global $sfRenderOff = Int(IniRead($sfTeam, "Member" & ($sfIndex + 1), "DisableRendering", 0))
 Global $sfInitialized = False, $sfHwnd = 0, $sfGamePID = 0
@@ -74,6 +77,7 @@ While True
         If $sfInitialized And Core_IsIngame() Then
             If StringCompare(Player_GetCharName(), $sfCharacter) <> 0 Then SF_Error("Character changed; stop and relaunch the team")
         EndIf
+        If $sfInitialized Then SF_RenderingCheck()
         SF_WriteStatus()
         $sfHeartbeatTimer = TimerInit()
     EndIf
@@ -181,8 +185,8 @@ Func SF_Attach()
     $sfInitialized = True
     $sfHwnd = $g_h_GWWindow
     $sfGamePID = $g_i_GWProcessId
-    If $sfRenderOff Then Ui_DisableRendering()
     WinSetState($sfHwnd, "", @SW_MINIMIZE)
+    SF_RenderingCheck()
     If Not Map_GetInstanceInfo("IsOutpost") Then
         SF_Error("Start in an outpost; no automatic resignation from existing adventures")
         Return
@@ -249,12 +253,12 @@ Func SF_Prepare()
         SF_SetPhase("Travel", "Location changed; regrouping")
         Return
     EndIf
-    If SF_Mobstopper() = 0 Then
+    If Not $sfTestMode And SF_Mobstopper() = 0 Then
         SF_Error("No Everlasting Mobstopper in carried bags")
         Return
     EndIf
     ; Conservative: reserve an empty slot even if an existing capture stack has room.
-    If SF_FreeSlots() < 1 Then
+    If Not $sfTestMode And SF_FreeSlots() < 1 Then
         SF_Error("Inventory full; free a carried bag slot")
         Return
     EndIf
@@ -455,6 +459,7 @@ Func SF_Move()
             $sfWaypoint = 2
         Else
             $sfCycle += 1
+            $sfKneelSent = False
             SF_SetPhase("Entry", "Leader requesting UW entry")
         EndIf
         Return
@@ -498,6 +503,11 @@ Func SF_Entry()
     EndIf
     If TimerDiff($sfActionTimer) < 2000 Then Return
     $sfActionTimer = TimerInit()
+    If $sfTestMode And Not $sfKneelSent Then
+        Chat_SendChat("kneel", "/")
+        $sfKneelSent = True
+        Return
+    EndIf
     Local $npc = SF_FindModel($sfGrenth)
     If $npc = 0 Then
         Chat_SendChat("kneel", "/")
@@ -527,11 +537,21 @@ Func SF_Finish($success, $reason)
     $sfRuns += 1
     If Not $success Then $sfFails += 1
     $sfTotalRunMS += TimerDiff($sfRunTimer)
-    If $success Then $sfCapturedCount += SF_Quantity($SF_CAPTURED) - $sfBefore
+    If $success Then
+        If $sfTestMode Then
+            $sfTestKills += 1
+        Else
+            $sfCapturedCount += SF_Quantity($SF_CAPTURED) - $sfBefore
+        EndIf
+    EndIf
     SF_SetPhase("Done", $reason)
 EndFunc
 
 Func SF_Fight()
+    If $sfTestMode Then
+        SF_TestFight()
+        Return
+    EndIf
     If Map_GetMapID() <> $SF_UW Then
         SF_Finish(False, "Unexpected map change during farm")
         Return
@@ -574,25 +594,7 @@ Func SF_Fight()
         EndIf
         Return
     EndIf
-    If TimerDiff($sfCastTimer) < $sfCastWait Or Agent_GetAgentInfo(-2, "IsCasting") Then Return
-    If $sfStep >= 8 Then Return
-    Local $slot = $sfSkillSequence[$sfStep]
-    ; Finish Him is only useful below half health, just as in the original script.
-    If $slot = 6 And Agent_GetAgentInfo($sfTarget, "HP") >= 0.49 Then
-        $sfStep += 1
-        Return
-    EndIf
-    If Skill_GetSkillbarInfo($slot, "RechargeTime") > 0 Then
-        $sfStep += 1
-        Return
-    EndIf
-    Local $skill = Skill_GetSkillbarInfo($slot, "SkillID")
-    Local $target = -2
-    If $slot = 3 Or $slot = 4 Or $slot = 5 Or $slot = 6 Then $target = $sfTarget
-    Skill_UseSkill($slot, $target)
-    $sfCastWait = _Max(300, (Skill_GetSkillInfo($skill, "Activation") + Skill_GetSkillInfo($skill, "Aftercast")) * 1000 + 150)
-    $sfCastTimer = TimerInit()
-    $sfStep += 1
+    SF_CastNext()
 EndFunc
 
 Func SF_AllDone()
@@ -608,6 +610,12 @@ Func SF_AllDone()
 EndFunc
 
 Func SF_Done()
+    If $sfTestMode Then
+        If TimerDiff($sfPhaseTimer) < 2000 Then Return
+        SF_SetPhase("Return", "Test: resigning; every account requests return to ToA")
+        $sfReturnSent = False
+        Return
+    EndIf
     If Map_GetMapID() = $SF_TOA Then
         SF_SetPhase("Prepare", "Checking supplies for next run")
         Return
@@ -638,7 +646,12 @@ Func SF_Return()
         Chat_SendChat("resign", "/")
         $sfReturnSent = True
     EndIf
-    If $sfIsLeader And TimerDiff($sfPhaseTimer) > 7000 And TimerDiff($sfActionTimer) > 3000 Then
+    If $sfTestMode And TimerDiff($sfPhaseTimer) > 2000 And TimerDiff($sfActionTimer) > 2000 Then
+        ; All clients send return, even if in-game leadership changed during the run.
+        Chat_SendChat("resign", "/")
+        Map_ReturnToOutpost(False)
+        $sfActionTimer = TimerInit()
+    ElseIf $sfIsLeader And TimerDiff($sfPhaseTimer) > 7000 And TimerDiff($sfActionTimer) > 3000 Then
         Map_ReturnToOutpost(False)
         $sfActionTimer = TimerInit()
     EndIf
@@ -648,6 +661,8 @@ Func SF_WriteStatus()
     Local $text = "[Worker]" & @CRLF
     $text &= "Stamp=" & _NowCalc() & @CRLF & "PID=" & @AutoItPID & @CRLF
     $text &= "Character=" & $sfCharacter & @CRLF & "Phase=" & $sfPhase & @CRLF & "State=" & $sfState & @CRLF
+    $text &= "TestMode=" & $sfTestMode & @CRLF & "Kills=" & $sfTestKills & @CRLF
+    $text &= "RenderingDisabled=" & $sfRenderOff & @CRLF
     $text &= "Mode=" & $sfMode & @CRLF & "Cycle=" & $sfCycle & @CRLF
     $text &= "Runs=" & $sfRuns & @CRLF & "Fails=" & $sfFails & @CRLF & "Captured=" & $sfCapturedCount & @CRLF
     $text &= "Rate=" & Round($sfCapturedCount * 3600000 / _Max(1000, TimerDiff($sfStartTimer)), 1) & @CRLF
@@ -708,4 +723,93 @@ EndFunc
 ; Launch module's logging adapter deliberately receives no command line/passwords.
 Func AddOns_Out($message)
     SF_Log($message)
+EndFunc
+
+
+Func SF_CastNext()
+    If TimerDiff($sfCastTimer) < $sfCastWait Or Agent_GetAgentInfo(-2, "IsCasting") Then Return
+    If $sfStep >= 8 Then Return
+    Local $slot = $sfSkillSequence[$sfStep]
+    ; Finish Him is only useful below half health, just as in the original script.
+    If $slot = 6 And Agent_GetAgentInfo($sfTarget, "HP") >= 0.49 Then
+        $sfStep += 1
+        Return
+    EndIf
+    If Skill_GetSkillbarInfo($slot, "RechargeTime") > 0 Then
+        $sfStep += 1
+        Return
+    EndIf
+    Local $skill = Skill_GetSkillbarInfo($slot, "SkillID")
+    Local $target = -2
+    If $slot = 3 Or $slot = 4 Or $slot = 5 Or $slot = 6 Then $target = $sfTarget
+    Skill_UseSkill($slot, $target)
+    $sfCastWait = _Max(300, (Skill_GetSkillInfo($skill, "Activation") + Skill_GetSkillInfo($skill, "Aftercast")) * 1000 + 150)
+    $sfCastTimer = TimerInit()
+    $sfStep += 1
+EndFunc
+
+Func SF_RenderingCheck()
+    Local $desired = Int(IniRead($sfCommand, "Control", "DisableRendering", $sfRenderOff)) <> 0
+    Local $disabled = Ui_GetRenderDisabled()
+    ; Match Encounter ReBuilt: toggle only when requested and actual states differ.
+    ; Ui_ToggleRendering also hides/shows the GW window and clears memory on disable.
+    If ($desired And Not $disabled) Or (Not $desired And $disabled) Then Ui_ToggleRendering()
+    $sfRenderOff = $desired
+EndFunc
+
+Func SF_TestAllLoaded()
+    For $n = 0 To $sfCount - 1
+        Local $id = $sfMembers[$n][0]
+        If $id = $sfID Then ContinueLoop
+        If Not SF_PeerFresh($id) Then Return False
+        If Int(SF_Peer($id, "Map")) <> $SF_UW Or Int(SF_Peer($id, "Cycle")) <> $sfCycle Then Return False
+        Local $phase = SF_Peer($id, "Phase", "")
+        If $phase <> "Fight" And $phase <> "Done" And $phase <> "Return" Then Return False
+    Next
+    Return True
+EndFunc
+
+Func SF_TestFight()
+    If Map_GetMapID() <> $SF_UW Then
+        SF_Finish(False, "Test: unexpected map change")
+        Return
+    EndIf
+    If TimerDiff($sfPhaseTimer) > 60000 Then
+        SF_Finish(False, "Test: skeleton kill or team load timed out")
+        Return
+    EndIf
+    If Not SF_TestAllLoaded() Then
+        $sfState = "Test: waiting for team to load UW"
+        Return
+    EndIf
+    If $sfTarget = 0 Then
+        $sfTarget = SF_FindModel($sfSkeleton1, $sfSkeleton2)
+        If $sfTarget = 0 Then Return
+        Agent_ChangeTarget($sfTarget)
+        Agent_Attack($sfTarget)
+        SF_Log("Test target agent=" & $sfTarget)
+    EndIf
+    If Agent_GetAgentPtr($sfTarget) = 0 Then
+        ; Loss of an agent alone is not proof that it died.
+        Return
+    EndIf
+    If Agent_GetAgentInfo($sfTarget, "IsDead") Then
+        Agent_CancelAction()
+        SF_Finish(True, "Test: skeleton dead; waiting 2 seconds")
+        Return
+    EndIf
+    If Agent_GetAgentInfo(-2, "IsDead") Then
+        SF_Finish(False, "Test: character died before skeleton")
+        Return
+    EndIf
+    $sfState = "Test: moving to and killing Skeleton of Dhuum"
+    SF_CastNext()
+    If $sfStep >= 8 And Not Agent_GetAgentInfo(-2, "IsCasting") And TimerDiff($sfCastTimer) > $sfCastWait Then
+        If TimerDiff($sfActionTimer) > 1000 Then
+            Agent_Attack($sfTarget)
+            $sfActionTimer = TimerInit()
+        EndIf
+        ; Repeat the damage portion when it recharges; never invoke Capture in test mode.
+        If Skill_GetSkillbarInfo(3, "RechargeTime") = 0 Then $sfStep = 4
+    EndIf
 EndFunc

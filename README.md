@@ -1,103 +1,95 @@
-# Skelefarm Hub — v0.2.1 test build
+# Skelefarm Hub / Python SkeleBot — v0.3.0
 
-A Windows hub for launching selected Guild Wars accounts and coordinating leader/follower skeleton farms. Includes the supplied GwAu3 API snapshot and account-launching code adapted from Encounter ReBuilt PUBLIC.
+A Windows Python hub and Python farm controller for selected Guild Wars accounts. The desktop uses EncounterHub's PySide6 implementation pattern and the same charcoal/teal stylesheet, checkboxes, per-row controls, and saved column widths.
 
-This source build has passed automated Python and static source checks. **It has not been compiled or run against Guild Wars here.** First verify party assembly, then test one supervised farm when event captures are available.
+## Current scenario: combat test
 
-## Launch from source
+Combat test is enabled automatically once when moving to this version. It preserves Farm and Assembly-only modes under **Team Settings**.
 
-1. Extract the complete source folder to a writable location.
-2. Install Python 3.11+ with Tkinter and AutoIt 3.3.16.1+ (32 bit).
-3. Run `Start-Hub.cmd` and accept the administrator prompt. Under **Paths**, select the 32-bit `AutoIt3.exe` if its default path is different.
-4. Click **Import characters.ini** and choose your existing local file. Imports character names and executable paths, without copying email addresses or passwords into the hub's settings.
-5. Double-click each account to choose its team, Leader/Follower role, launch mode, `Gw.exe`, and `Gw.dat`. Browse buttons are included. Selecting `Gw.dat` finds its sibling `Gw.exe` when present.
-6. Select the accounts to run and click **Launch selected accounts**. Only selected accounts start. Include exactly one designated leader per selected team. A launch session's team roster consists of those selected accounts.
+1. Selected characters travel to the same Temple of the Ages town, region, language, and district.
+2. The configured leader forms the exact selected team. Followers accept that leader.
+3. The leader runs to the Grenth statue, kneels, and requests UW entry.
+4. Accounts wait for the team to load UW, move to the Skeleton of Dhuum, and kill it using the original build/skill sequence plus normal attacks.
+5. Each worker verifies the skeleton is dead, waits **two seconds**, then resigns.
+6. **Every account repeatedly requests return to town**, regardless of current in-game leadership, until it confirms Temple of the Ages is loaded as an outpost.
+7. Accounts regroup under the designated leader, which attempts the next UW entry.
 
-### GW executable and Dat selection
+Combat test ignores Everlasting Mobstopper and inventory-space requirements. It never invokes capture or counts kills as captured skeletons. The leader still needs 1,000 gold per entry and working Grenth access. A vanished target alone does not count as a confirmed death. Timeouts produce an attention state.
 
-Use the `Gw.exe` and `Gw.dat` from the **same installation folder**, matching the working farm's executable-based installation selection. Selecting a Dat file selects that installation; the hub does not copy, rename, or relink large Dat files. A custom-named Dat in an unrelated folder is not treated as a supported GW1 command-line switch.
+Stop/relaunch a team to move existing workers onto the new Python controller and combat-test mode. Updating the hub leaves existing workers running their original version until you restart them.
 
-### Account launch modes
+## Rendering and controls
 
-| Mode | Behavior |
-|---|---|
-| Direct | Reads the chosen character section from the local `characters.ini`, decrypts its password in the worker, launches GW suspended, applies the supplied multiclient patch, resumes it, tracks its playable process, then attaches the farm. |
-| Attach | Attaches to a character you have already logged in. |
-| Profile | Uses the earlier GW Launcher's `-launch "profile"` interface; configure the external launcher under Paths. |
+Each row has **Select**, character/team/role, live status, **Disable Rendering**, Pause, Resume, Stop, Launch, and statistics. Column widths can be resized and are saved; **Fit Columns** resets the layout.
 
-Direct mode reuses a character that is already logged in. The launcher uses `Email`, `Pwd`, and `FilePath`, with the account editor's executable override. It passes the account's character name with the login arguments, as Encounter does.
+**Disable Rendering** is a live checkbox and a saved account preference. It follows Encounter ReBuilt's implementation: compare the requested setting with `Ui_GetRenderDisabled()`, then use `Ui_ToggleRendering()` only when they differ. Disabling also hides the GW window and clears memory; enabling shows it again. Worker cleanup restores rendering and shows its client.
 
-The supplied farm encrypts `{SEC}` passwords using its script filename. The default seed is `Encounter_ReBuilt.au3`, with a fallback to `Encounter_ReBuilt.exe`; if your original script was renamed when it saved passwords, enter that exact filename in **Original encryption script name**. Plaintext passwords are also accepted by the local launcher for compatibility. The hub never rewrites the original INI.
+Rendering changes preserve pause/run state. Pause/Resume/Stop row buttons act on that account's team; coherent team behavior prevents one paused account from being left behind. Launch on a single follower row requires selecting its leader as well through **Launch Selected**.
 
-Passwords are read only by the Windows worker and passed to GW through the same command-line login mechanism as the supplied farm. They are not placed in the hub settings, session INIs, logs, repository, source package, or release ZIP. Keep your actual `characters.ini` outside the repository. The file is excluded by `.gitignore` as an additional safeguard.
+- **Pause:** finish the current run, then wait in an outpost.
+- **Resume:** resume assembly/entry using the same session roster.
+- **Stop:** stop workers and restore rendering; game clients stay open.
+- **Close hub:** workers remain running. Reopening reconnects through saved session files.
+- **Update Now:** restarts only the hub; existing workers and clients stay running.
 
-## Test assembly before farming
+## Architecture and preserved logic
 
-**Assembly only** is enabled by default. All selected characters need ToA unlocked, an Everlasting Mobstopper in carried bags, one empty carried slot, and the farm build's skills unlocked.
+`worker.py` owns the complete farm state machine, timing, team identity, supplies, combat, capture verification, statistics, resignation and return behavior. `desktop.py` is the PySide6 GUI. `controller.py` shares account/settings/session handling independently from the GUI layout, mirroring EncounterHub's controller reuse.
 
-1. Put two configured characters in different towns/districts.
-2. Keep their team in **Assembly only** under **Team settings**. Default destination: Temple of the Ages, International district 1, language ID 0.
-3. Select both, including the designated leader, and launch.
-4. Verify they travel to the same district, the configured leader invites, and followers accept that leader.
-5. The leader should show **Assembly verified — assembly-only mode**. No UW entry payment occurs.
-6. Test Pause, Resume, Stop, and closing/reopening the hub.
+GwAu3 is an AutoIt API. `GwAu3Bridge.au3` is a thin x86 adapter exposing game reads/actions over an authenticated loopback connection. It contains no farm loop or farm timing. The Python worker controls it. Compiled releases embed this adapter inside the Python worker executable; no extra interpreter is required on the target PC.
 
-The leader verifies live character login numbers, connectivity, exact roster, and leader identity. Heroes/henchmen and unconfigured players do not satisfy readiness. Town, region, language, and district must all match. These are local-PC teams; cross-machine coordination is not implemented.
+The old AutoIt farm is retained under `legacy/` as a reference and is not compiled or launched. Native account launching still uses the supplied Encounter ReBuilt's suspended-process launch, multiclient patch, encrypted INI reads and playable-process tracking. The actual farm decisions are Python.
 
-## Farm mode and controls
+**Farm** mode retains Mobstopper and free-slot validation, original skill IDs, inventory-verified captures, follower-completion coordination and leader return behavior. **Assembly only** stops after verified party formation without paying for UW entry.
 
-Stop the team, select **Farm** under Team settings, and relaunch the selected roster. The leader follows the original ToA route and Grenth dialogue sequence. Each worker uses the original farm skill order with cast pacing and bounded waits. Success requires an actual increase in captured skeletons in that character's inventory. The leader waits for same-cycle completion before the party resigns and returns.
+Original A/Mo template: `OwNS44PTceTQmE4O2kxkRQYh`. Slots: Shadow Sanctuary (Luxon), Dash, Signet of Judgment, Death's Charge, You Move Like a Dwarf!, Finish Him!, Unseen Fury, Smoke Powder Defense.
 
-The leader needs 1,000 gold per entry. A bounded storage-gold withdrawal is attempted if necessary; have sufficient carried gold for your first test. Event availability, Grenth access, map signatures, combat timing and simultaneous capture behavior still require live confirmation.
+## Accounts, executables and Dat files
 
-- **Pause teams:** finish the current farm, return, and pause in the outpost.
-- **Resume teams:** continue with the same session roster.
-- **Stop teams:** stop workers, restore rendering, and leave GW clients open. Return manually if stopped inside UW.
-- **Close hub:** leave active workers running. Reopening reconnects to their saved session registry.
-- **Attention:** fix the reported issue, stop the team, and relaunch. No repeated paid entries or automatic crash-restart loop.
-- **Open logs:** open local session logs. Logs rotate at approximately 5 MiB.
+1. Import your local **characters.ini**.
+2. Edit each account's team, Leader/Follower role, launch mode, GW executable and Dat file.
+3. Choose `Gw.exe` and `Gw.dat` from the same installation folder. Browsing to a Dat selects the sibling executable when present. Large Dat files are never copied or relinked.
+4. Select the accounts to launch, including exactly one leader per selected team. Only selected accounts form the launch roster.
 
-Team commands affect all workers in the selected rows' active teams. Team configuration is frozen while running. Statistics reset with workers; captures/hour includes elapsed waiting/paused time.
+**Direct** mode reads the local INI's `Email`, `Pwd`, and `FilePath`. It supports Encounter's `{SEC}` encryption, defaulting to `Encounter_ReBuilt.au3` and falling back to `Encounter_ReBuilt.exe`; enter the exact original encryption filename if yours was renamed. **Attach** uses an already logged-in character. **Profile** uses the earlier external GW Launcher's `-launch` interface.
 
-Original template: `OwNS44PTceTQmE4O2kxkRQYh` (A/Mo). Its slots are Shadow Sanctuary (Luxon), Dash, Signet of Judgment, Death's Charge, You Move Like a Dwarf!, Finish Him!, Unseen Fury, Smoke Powder Defense. The old `protspirit` variable name did not match its actual template; this worker validates the exact eight original skill IDs.
+The original local INI is never rewritten. Passwords/email addresses are not copied into settings, session files, logs, source, or releases. Login uses the same command-line mechanism as the supplied working farm. Keep `characters.ini` outside the repository; `.gitignore` also excludes it and Dat files.
 
-## Check for Update / Update Now
+Settings, selected rows, rendering preferences, column widths, session registries and logs live under `%LOCALAPPDATA%\SkelefarmHub`. Logs rotate at approximately 5 MiB. Accounts on one Windows PC are supported; cross-PC teams and skeleton turn-in are not implemented.
 
-**Check for Update** queries the latest stable GitHub release at `dasaright/SkeleHub` in the background. Network errors and a repository without a published release produce a visible status message.
+## Run from source
 
-When a newer release with `SkeleHub-VERSION-windows.zip` is available, **Update Now** enables beneath it. Clicking downloads the package, checks its supplied SHA-256 digest when GitHub provides one, validates ZIP entries, then starts an independent replacement helper. The helper confirms startup before the hub closes, waits for the old hub to exit, retries temporarily locked files, backs up replaced files, applies the update, and starts the hub again. Failure to start the helper leaves the current hub open. It attempts rollback if replacement fails. Settings and session state stay in `%LOCALAPPDATA%\SkelefarmHub`.
+Install Python 3.11+ and 32-bit AutoIt 3.3.16.1+, then:
 
-Worker binaries are named `Skelefarm-worker-VERSION.exe`. An update installs a new worker filename instead of replacing a running worker. Existing workers and GW clients keep running; new launches use the updated worker. Stop/relaunch a team when you want that team to adopt the new worker. Old worker files are retained.
+```powershell
+py -3 -m pip install -r requirements.txt
+```
 
-Updating a source-run hub installs and restarts the compiled hub in that folder. It does not rewrite the source checkout. `Start-Hub.cmd` prefers the compiled hub when present.
+Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe` path under **GW Paths** if needed. The desktop and farm run in Python; the source bridge runs through AutoIt.
 
-**An actual published Windows release is required.** These buttons do not compile an executable from raw GitHub source. Administrator access and a writable installation folder are required. Windows replacement/restart behavior still needs a supervised Windows test.
+## Executables, updates and releases
 
-## Build executables and release package
+Keep these together:
 
-Run on Windows with Python and AutoIt installed:
+- `Skelefarm Hub.exe`
+- `Skelefarm-worker-0.3.0.exe`
+
+The Python worker embeds its versioned x86 bridge. Target PCs need neither Python nor AutoIt once built. Pin the hub executable to the taskbar.
+
+**Check for Updates** reads the public GitHub release feed. **Update Now** downloads the matching `SkeleHub-VERSION-windows.zip`, verifies its digest when supplied, rejects unexpected ZIP contents, confirms the helper started, then closes the hub. A separate helper waits for it to exit, retries temporary file locks, replaces files with backups, and restarts the hub. Failure attempts rollback. Settings and credentials are never replaced.
+
+Versioned workers prevent replacing an active binary. This package stays compatible with the v0.2.1 updater: the adapter is embedded, so the portable ZIP still contains only the hub, versioned worker, README and audit.
+
+Build on Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\Build-Windows.ps1
 ```
 
-For another AutoIt installation, add `-AutoItDir 'C:\YourPath\AutoIt3'`.
+Add `-AutoItDir 'C:\YourPath\AutoIt3'` for another installation. Builds run AutoIt checks on the native bridge, Python/Qt/Windows tests, compile the bridge, package the Python worker and Qt hub, and create the release ZIP. Main pushes/tags build and publish a new VERSION only after success; existing releases are not overwritten. CI verifies the public release download using the real updater code.
 
-The script runs Au3Check and Python tests, compiles the x86 worker, installs PyInstaller, builds the hub, and creates `SkeleHub-0.2.1-windows.zip`. The portable package contains only:
+## Validation limits
 
-- `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.2.1.exe`
-- `README.md`
-- `AUDIT.md`
+The v0.2.1 updater passed all 29 Windows checks, real replacement/restart and rollback tests with an independent worker left running, and a public download/checksum/package validation check.
 
-Keep both executables together; launch and pin the hub to the taskbar. The target PC does not require Python or AutoIt once the binaries are built successfully.
-
-The included Windows release workflow builds on main pushes and `v*` tags, verifies explicit tags against `version.py`, and publishes a new version only if checks and compilation pass. Existing versioned releases remain unchanged; increment `VERSION` for a new release. Manual workflow runs produce a downloadable Actions artifact without publishing a release. The workflow has not run successfully yet in this development session.
-
-## Validation and scope
-
-27 Python/static checks pass locally; two additional Windows-only tests exercise real replacement/restart and rollback using harmless temporary executables. The Windows CI runs all 29 checks. Tests cover configuration, credential exclusion, Unicode account import, Dat installation validation, selected roster snapshots, INI transport, stale status files, API names/control blocks, release selection, version comparisons, and rejecting malformed/unexpected update ZIP contents. Python syntax checks also pass.
-
-Unavailable here: Windows GUI, AutoIt compilation, launcher/decryption behavior on Windows, current game memory offsets, combat, and actual binary replacement/restart. A passing Python test suite does not establish that the farm is live-ready.
-
-The original attachments and turn-in script are unchanged. Automatic turn-in and cross-PC teams are outside this version. See `AUDIT.md` for the original repairs and source provenance.
+Version 0.3 adds Python farm-scenario tests and a Qt desktop smoke test. Live game behavior, combat/build suitability, current memory signatures and repeated UW entry require supervised in-game testing. Begin with two accounts. These changes do not claim a completed live farm test.

@@ -66,7 +66,7 @@ class ConfigTests(unittest.TestCase):
             parser.read(directory / 'team.ini', encoding='utf-16')
             self.assertEqual(parser['Team']['Count'], '3')
             self.assertEqual(parser['Team']['Leader'], 'a1')
-            self.assertEqual(parser['Team']['AssembleOnly'], '1')
+            self.assertEqual(parser['Team']['AssembleOnly'], '0')
             c['accounts'][0]['character'] = 'Changed'
             self.assertEqual(parser['Member1']['Character'], 'Alpha Farm Char')
             self.assertFalse((directory / 'other.command.ini').exists())

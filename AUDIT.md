@@ -68,3 +68,13 @@ Current tests: 23 passing Python/static checks. Current limitations: no Windows 
 Confirmed SkeleHub is public and the initial source-check workflow passed. No Windows release existed at the time of review. Added a helper-ready handshake, cancelled-handoff guard, replacement retries, reverse-order rollback, and a persisted result for the next hub startup. The updater leaves current workers and their versioned executables untouched.
 
 Added tests for full release download/staging, digest rejection, incomplete download cleanup, helper readiness/failure, and real Windows replacement/restart plus rollback with isolated temporary test programs. Local result: 27 passing, two Windows tests skipped because this environment is Linux. CI runs the two additional Windows tests. The Windows workflow now creates a release for a new VERSION after successful main/tag builds; existing releases are not overwritten.
+
+## Version 0.3.0 Python port and combat test
+
+User requested a Python SkeleBot and the actual EncounterHub theme/implementation. Read the current public EncounterHub `qt_app.py`, `qt_style.py`, `app_main.py`, `supervisor.py`, `hub.py`, and desktop entry files. Reused its exact stylesheet and Qt/controller reuse pattern, checkboxes, per-row controls, interactive columns and saved widths.
+
+The Python state machine owns all farm decisions. The AutoIt adapter exposes only direct GwAu3 reads/actions and the reference account launcher over an authenticated loopback transport. Its binary is embedded in the packaged Python worker, maintaining the two-executable release ZIP expected by the proven v0.2.1 updater. The previous AutoIt farm is archived under legacy and no longer built/launched.
+
+Combat test skips supply gates, verifies a complete team in ToA, kneels/enters UW, waits for team loading, attacks the skeleton, verifies death, waits two seconds, resigns, and has every account repeat return requests until ToA is positively identified. Exact team leadership is restored before another entry if game leadership changed. Farm mode preserves inventory-verified capture behavior. Rendering uses Encounter ReBuilt's requested-vs-actual toggle, including window hide/show and memory clearing, with live per-account Qt checkboxes.
+
+Version 0.2.1 build and public updater download succeeded in GitHub Actions. Version 0.3 game behavior remains pending supervised play testing. New tests cover the Python scenarios and Qt controls; Windows release builds run them alongside the existing updater tests.
