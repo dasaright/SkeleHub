@@ -151,7 +151,7 @@ function Replace-WithRetry([string]$Source, [string]$Target) {
     } while ($true)
 }
 try {
-    $names = @(Get-Content -LiteralPath (Join-Path $StagingDir 'manifest.json') -Raw | ConvertFrom-Json)
+    $names = Get-Content -LiteralPath (Join-Path $StagingDir 'manifest.json') -Raw | ConvertFrom-Json
     foreach ($name in $names) {
         if ([IO.Path]::GetFileName($name) -ne $name) { throw 'Invalid manifest filename' }
     }
