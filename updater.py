@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import urllib.request
 import zipfile
 from version import VERSION, REPOSITORY, worker_name
@@ -111,48 +112,89 @@ def apply_and_restart(staging, install_dir, pid):
     if os.name != 'nt':
         raise RuntimeError('Updates require Windows.')
     # Old workers use versioned filenames, so they remain untouched and running.
-    subprocess.Popen(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+    process = subprocess.Popen(['powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                       str(staging / 'apply.ps1'), '-HubPid', str(pid),
                       '-InstallDir', str(install_dir), '-StagingDir', str(staging)],
                      creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        if (staging / 'ready').is_file():
+            return
+        if process.poll() is not None:
+            (staging / 'cancelled').touch()
+            raise RuntimeError('Update helper could not start. See the staged update log.')
+        time.sleep(0.1)
+    (staging / 'cancelled').touch()
+    raise RuntimeError('Update helper did not confirm startup; the hub remains open.')
 
 
 HELPER = r'''
 param([int]$HubPid, [string]$InstallDir, [string]$StagingDir)
 $ErrorActionPreference = 'Stop'
 $log = Join-Path $StagingDir 'update.log'
+$result = Join-Path (Split-Path $StagingDir -Parent) 'last-update.json'
 $backups = @{}
 $installed = @()
+$names = @()
+$hubExited = $false
+function Replace-WithRetry([string]$Source, [string]$Target) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    do {
+        try {
+            Copy-Item -LiteralPath $Source -Destination ($Target + '.new') -Force
+            Move-Item -LiteralPath ($Target + '.new') -Destination $Target -Force
+            return
+        } catch {
+            if ([DateTime]::UtcNow -ge $deadline) { throw }
+            Start-Sleep -Milliseconds 250
+        }
+    } while ($true)
+}
 try {
-    # Wait only for the hub. Do not stop any worker or GW process.
-    $hub = Get-Process -Id $HubPid -ErrorAction SilentlyContinue
-    if ($hub) { Wait-Process -Id $HubPid -Timeout 60 -ErrorAction Stop }
-    $names = @(Get-Content (Join-Path $StagingDir 'manifest.json') -Raw | ConvertFrom-Json)
+    $names = @(Get-Content -LiteralPath (Join-Path $StagingDir 'manifest.json') -Raw | ConvertFrom-Json)
     foreach ($name in $names) {
         if ([IO.Path]::GetFileName($name) -ne $name) { throw 'Invalid manifest filename' }
+    }
+    # Acknowledge startup before the GUI exits. Wait only for the hub PID.
+    'ready' | Set-Content -LiteralPath (Join-Path $StagingDir 'ready')
+    if (Test-Path -LiteralPath (Join-Path $StagingDir 'cancelled')) { throw 'Update handoff cancelled' }
+    $hub = Get-Process -Id $HubPid -ErrorAction SilentlyContinue
+    if ($hub) { Wait-Process -Id $HubPid -Timeout 60 -ErrorAction Stop }
+    if (Test-Path -LiteralPath (Join-Path $StagingDir 'cancelled')) { throw 'Update handoff cancelled' }
+    $hubExited = $true
+    foreach ($name in $names) {
+        $source = Join-Path $StagingDir $name
+        if (!(Test-Path -LiteralPath $source -PathType Leaf)) { throw 'Staged update file missing' }
         $target = Join-Path $InstallDir $name
-        if (Test-Path $target) {
+        if (Test-Path -LiteralPath $target) {
             $backup = Join-Path $StagingDir ($name + '.backup')
-            Copy-Item $target $backup -Force
+            Copy-Item -LiteralPath $target -Destination $backup -Force
             $backups[$target] = $backup
         }
-        Copy-Item (Join-Path $StagingDir $name) ($target + '.new') -Force
-        Move-Item ($target + '.new') $target -Force
+        # Record before replacement so even a partial failure is rolled back.
         $installed += $target
+        Replace-WithRetry $source $target
     }
-    Start-Process (Join-Path $InstallDir 'Skelefarm Hub.exe') -WorkingDirectory $InstallDir
-    'Update applied; hub restarted. Active workers were left running.' | Set-Content $log
+    Start-Process -FilePath (Join-Path $InstallDir 'Skelefarm Hub.exe') -WorkingDirectory $InstallDir -ErrorAction Stop
+    'Update applied; hub restarted. Active workers were left running.' | Set-Content -LiteralPath $log
+    @{ success = $true; message = 'Update applied; hub restarted.'; log = $log } | ConvertTo-Json | Set-Content -LiteralPath $result -Encoding UTF8
 } catch {
     $failure = $_
+    [array]::Reverse($installed)
     foreach ($target in $installed) {
-        if ($backups.ContainsKey($target)) { Copy-Item $backups[$target] $target -Force }
-        else { Remove-Item $target -ErrorAction SilentlyContinue }
+        try {
+            if ($backups.ContainsKey($target)) { Replace-WithRetry $backups[$target] $target }
+            else { Remove-Item -LiteralPath $target -ErrorAction SilentlyContinue }
+        } catch { 'Rollback failed: ' + $_ | Add-Content -LiteralPath $log }
     }
-    # Also remove partially staged files.
-    Get-ChildItem $InstallDir -Filter '*.new' | Remove-Item -ErrorAction SilentlyContinue
-    $failure | Out-String | Set-Content $log
+    foreach ($name in $names) {
+        Remove-Item -LiteralPath ((Join-Path $InstallDir $name) + '.new') -ErrorAction SilentlyContinue
+    }
+    $failure | Out-String | Add-Content -LiteralPath $log
+    @{ success = $false; message = 'Update failed; rollback attempted.'; log = $log } | ConvertTo-Json | Set-Content -LiteralPath $result -Encoding UTF8
     $old = Join-Path $InstallDir 'Skelefarm Hub.exe'
-    if (Test-Path $old) { Start-Process $old -WorkingDirectory $InstallDir }
-    else { Start-Process notepad.exe -ArgumentList $log }
+    if ($hubExited -and (Test-Path -LiteralPath $old -PathType Leaf)) {
+        Start-Process -FilePath $old -WorkingDirectory $InstallDir -ErrorAction SilentlyContinue
+    }
 }
 '''

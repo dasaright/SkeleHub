@@ -104,3 +104,59 @@ class UpdateTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DownloadAndHandoffTests(unittest.TestCase):
+    def archive(self):
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, 'w') as z:
+            z.writestr('Skelefarm Hub.exe', b'MZhub')
+            z.writestr(worker_name('0.3.0'), b'MZworker')
+        return output.getvalue()
+
+    def test_stage_download_and_hash(self):
+        import hashlib
+        from updater import stage_release
+        data = self.archive()
+        release = dict(version='0.3.0', url='https://example.invalid/download', size=len(data),
+                       digest='sha256:' + hashlib.sha256(data).hexdigest())
+        with tempfile.TemporaryDirectory() as directory:
+            sentinel = Path(directory) / 'settings.json'
+            sentinel.write_text('preserve me')
+            with patch('urllib.request.urlopen', return_value=io.BytesIO(data)):
+                stage = stage_release(release, directory)
+            self.assertTrue((stage / 'apply.ps1').is_file())
+            self.assertEqual((stage / worker_name('0.3.0')).read_bytes(), b'MZworker')
+            self.assertEqual(sentinel.read_text(), 'preserve me')
+
+    def test_bad_checksum_and_incomplete_download_clean_stage(self):
+        from updater import stage_release
+        data = self.archive()
+        for size, digest in ((len(data), 'sha256:wrong'), (len(data) + 1, None)):
+            with tempfile.TemporaryDirectory() as directory:
+                with patch('urllib.request.urlopen', return_value=io.BytesIO(data)):
+                    with self.assertRaises(ValueError):
+                        stage_release(dict(version='0.3.0', url='https://example.invalid/download', size=size, digest=digest), directory)
+                self.assertEqual(list(Path(directory).iterdir()), [])
+
+    def test_helper_failure_keeps_hub_open(self):
+        from updater import apply_and_restart
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory)
+            with patch('updater.os.name', 'nt'), patch('updater.subprocess.Popen') as popen:
+                popen.return_value.poll.return_value = 1
+                with self.assertRaises(RuntimeError):
+                    apply_and_restart(stage, stage, 1234)
+            self.assertTrue((stage / 'cancelled').exists())
+
+    def test_helper_readiness_and_arguments(self):
+        from updater import apply_and_restart
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory)
+            (stage / 'ready').touch()
+            with patch('updater.os.name', 'nt'), patch('updater.subprocess.Popen') as popen:
+                apply_and_restart(stage, stage, 1234)
+                args = popen.call_args.args[0]
+            self.assertIn('-HubPid', args)
+            self.assertIn('1234', args)
+            self.assertNotIn('Stop-Process', ' '.join(args))

@@ -1,4 +1,4 @@
-# Skelefarm Hub — v0.2.0 test build
+# Skelefarm Hub — v0.2.1 test build
 
 A Windows hub for launching selected Guild Wars accounts and coordinating leader/follower skeleton farms. Includes the supplied GwAu3 API snapshot and account-launching code adapted from Encounter ReBuilt PUBLIC.
 
@@ -65,13 +65,11 @@ Original template: `OwNS44PTceTQmE4O2kxkRQYh` (A/Mo). Its slots are Shadow Sanct
 
 **Check for Update** queries the latest stable GitHub release at `dasaright/SkeleHub` in the background. Network errors and a repository without a published release produce a visible status message.
 
-When a newer release with `SkeleHub-VERSION-windows.zip` is available, **Update Now** enables beneath it. Clicking downloads the package, checks its supplied SHA-256 digest when GitHub provides one, validates ZIP entries, then starts an independent replacement helper. The helper waits for the old hub to exit, backs up replaced files, applies the update, and starts the hub again. It attempts rollback if replacement fails. Settings and session state stay in `%LOCALAPPDATA%\SkelefarmHub`.
+When a newer release with `SkeleHub-VERSION-windows.zip` is available, **Update Now** enables beneath it. Clicking downloads the package, checks its supplied SHA-256 digest when GitHub provides one, validates ZIP entries, then starts an independent replacement helper. The helper confirms startup before the hub closes, waits for the old hub to exit, retries temporarily locked files, backs up replaced files, applies the update, and starts the hub again. Failure to start the helper leaves the current hub open. It attempts rollback if replacement fails. Settings and session state stay in `%LOCALAPPDATA%\SkelefarmHub`.
 
 Worker binaries are named `Skelefarm-worker-VERSION.exe`. An update installs a new worker filename instead of replacing a running worker. Existing workers and GW clients keep running; new launches use the updated worker. Stop/relaunch a team when you want that team to adopt the new worker. Old worker files are retained.
 
 Updating a source-run hub installs and restarts the compiled hub in that folder. It does not rewrite the source checkout. `Start-Hub.cmd` prefers the compiled hub when present.
-
-**Private repository note:** the current updater uses unauthenticated release downloads. With SkeleHub private, updates will not be accessible until authenticated download support is added or a public release source is configured. Account credentials are unrelated to GitHub authentication.
 
 **An actual published Windows release is required.** These buttons do not compile an executable from raw GitHub source. Administrator access and a writable installation folder are required. Windows replacement/restart behavior still needs a supervised Windows test.
 
@@ -85,20 +83,20 @@ powershell -ExecutionPolicy Bypass -File .\Build-Windows.ps1
 
 For another AutoIt installation, add `-AutoItDir 'C:\YourPath\AutoIt3'`.
 
-The script runs Au3Check and Python tests, compiles the x86 worker, installs PyInstaller, builds the hub, and creates `SkeleHub-0.2.0-windows.zip`. The portable package contains only:
+The script runs Au3Check and Python tests, compiles the x86 worker, installs PyInstaller, builds the hub, and creates `SkeleHub-0.2.1-windows.zip`. The portable package contains only:
 
 - `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.2.0.exe`
+- `Skelefarm-worker-0.2.1.exe`
 - `README.md`
 - `AUDIT.md`
 
 Keep both executables together; launch and pin the hub to the taskbar. The target PC does not require Python or AutoIt once the binaries are built successfully.
 
-The included Windows release workflow builds on `v*` tags, verifies the tag against `version.py`, and publishes the matching ZIP only if checks and compilation pass. Manual workflow runs produce a downloadable Actions artifact without publishing a release. The workflow has not run successfully yet in this development session.
+The included Windows release workflow builds on main pushes and `v*` tags, verifies explicit tags against `version.py`, and publishes a new version only if checks and compilation pass. Existing versioned releases remain unchanged; increment `VERSION` for a new release. Manual workflow runs produce a downloadable Actions artifact without publishing a release. The workflow has not run successfully yet in this development session.
 
 ## Validation and scope
 
-23 Python/static checks pass, covering configuration, credential exclusion, Unicode account import, Dat installation validation, selected roster snapshots, INI transport, stale status files, API names/control blocks, release selection, version comparisons, and rejecting malformed/unexpected update ZIP contents. Python syntax checks also pass.
+27 Python/static checks pass locally; two additional Windows-only tests exercise real replacement/restart and rollback using harmless temporary executables. The Windows CI runs all 29 checks. Tests cover configuration, credential exclusion, Unicode account import, Dat installation validation, selected roster snapshots, INI transport, stale status files, API names/control blocks, release selection, version comparisons, and rejecting malformed/unexpected update ZIP contents. Python syntax checks also pass.
 
 Unavailable here: Windows GUI, AutoIt compilation, launcher/decryption behavior on Windows, current game memory offsets, combat, and actual binary replacement/restart. A passing Python test suite does not establish that the farm is live-ready.
 

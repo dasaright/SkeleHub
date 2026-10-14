@@ -1,6 +1,7 @@
 name: Windows release
 on:
   push:
+    branches: [main]
     tags: ['v*']
   workflow_dispatch:
 permissions:
@@ -32,11 +33,17 @@ jobs:
           path: SkeleHub-*-windows.zip
           if-no-files-found: error
       - name: Publish versioned release
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $asset = (Get-ChildItem SkeleHub-*-windows.zip | Select-Object -First 1).FullName
-          gh release create $env:GITHUB_REF_NAME $asset --title "SkeleHub $env:GITHUB_REF_NAME" --notes "Windows test build. See README for setup and supervised testing."
-          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
+          $version = (python -c 'from version import VERSION; print(VERSION)').Trim()
+          $tag = "v$version"
+          $asset = (Get-ChildItem "SkeleHub-$version-windows.zip" | Select-Object -First 1).FullName
+          gh release view $tag --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; leaving its files unchanged."
+          } else {
+            gh release create $tag $asset --target $env:GITHUB_SHA --latest --title "SkeleHub $tag" --notes "Windows test build. See README for setup and supervised game testing."
+            if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
+          }

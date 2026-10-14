@@ -106,6 +106,14 @@ class Hub:
         self.notice = tk.StringVar(value='Add characters, assign a leader per team, then launch. Assembly-only is enabled by default.')
         ttk.Label(root, textvariable=self.notice, padding=10, wraplength=1050).pack(fill='x')
         root.protocol('WM_DELETE_WINDOW', self.close)
+        previous_update = DATA / 'last-update.json'
+        if previous_update.is_file():
+            try:
+                report = json.loads(previous_update.read_text(encoding='utf-8-sig'))
+                self.notice.set(report['message'] + (f" Log: {report['log']}" if not report.get('success') else ''))
+                previous_update.unlink()
+            except (ValueError, OSError, KeyError):
+                pass
         self.refresh()
 
     def import_characters(self):

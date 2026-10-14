@@ -60,4 +60,11 @@ The hub imports only character names and filesystem references. The original loc
 
 The updater downloads only the expected release asset from this repository, checks the API-provided digest when available, rejects extra files/path traversal/links/oversized packages, and stages replacement outside the installation. A separate helper waits only for the hub PID. Versioned worker names preserve the binaries of running workers. Replacement failures attempt rollback. No credentials or settings are included in a release package.
 
-Current tests: 23 passing Python/static checks. Current limitations: no Windows compilation, GUI, live login/decryption, farming, or actual update/restart execution available in this environment. Source publication was approved. The target repository is currently private; its visibility is preserved.
+Current tests: 23 passing Python/static checks. Current limitations: no Windows compilation, GUI, live login/decryption, farming, or actual update/restart execution available in this environment. Source publication was approved. The user made the repository public and explicitly approved public source publication.
+
+
+## Version 0.2.1 updater review
+
+Confirmed SkeleHub is public and the initial source-check workflow passed. No Windows release existed at the time of review. Added a helper-ready handshake, cancelled-handoff guard, replacement retries, reverse-order rollback, and a persisted result for the next hub startup. The updater leaves current workers and their versioned executables untouched.
+
+Added tests for full release download/staging, digest rejection, incomplete download cleanup, helper readiness/failure, and real Windows replacement/restart plus rollback with isolated temporary test programs. Local result: 27 passing, two Windows tests skipped because this environment is Linux. CI runs the two additional Windows tests. The Windows workflow now creates a release for a new VERSION after successful main/tag builds; existing releases are not overwritten.
