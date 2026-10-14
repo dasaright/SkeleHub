@@ -56,6 +56,10 @@ Exit
 
 Func BridgeDispatch(ByRef $a)
     Switch $a[1]
+        Case "attach_pid"
+            If $a[0] <> 2 Then Return "0"
+            $bridgeAttached = Core_Initialize(Int($a[2]), False) <> 0
+            Return Int($bridgeAttached)
         Case "attach"
             If $a[0] <> 2 Then Return "0"
             $bridgeAttached = Core_Initialize($a[2], False) <> 0
@@ -71,9 +75,28 @@ Func BridgeDispatch(ByRef $a)
     EndSwitch
     If Not $bridgeAttached Then Return "0"
     Switch $a[1]
+        Case "login"
+            Local $chosen = -1, $chosenName = ""
+            If Core_IsCharacterSelection() And PreGame_Ptr() <> 0 Then
+                $chosen = Utils_MakeInt32(PreGame_ChosenCharacter())
+                If $chosen >= 0 And $chosen < 256 Then $chosenName = StringStripWS(PreGame_CharName($chosen), 3)
+            EndIf
+            Return "alive=" & Int(ProcessExists($g_i_GWProcessId) <> 0) & @TAB & "ingame=" & Int(Core_IsIngame()) & @TAB & "selection=" & Int(Core_IsCharacterSelection()) & @TAB & "index=" & $chosen & @TAB & "selected=" & $chosenName
+        Case "key"
+            If $a[0] <> 2 Then Return "0"
+            If Not Core_IsCharacterSelection() Then Return "0"
+            Switch $a[2]
+                Case "N", "RIGHT", "ENTER"
+                    ControlSend($g_h_GWWindow, "", "", "{" & $a[2] & "}")
+                Case Else
+                    Return "0"
+            EndSwitch
         Case "snapshot"
             Local $reply = "map=" & Map_GetMapID() & @TAB & "instance=" & Map_GetInstanceInfo("Type")
             $reply &= @TAB & "ingame=" & Int(Core_IsIngame()) & @TAB & "alive=" & Int(ProcessExists($g_i_GWProcessId) <> 0)
+            $reply &= @TAB & "character=" & Player_GetCharName()
+            $reply &= @TAB & "primary=" & Party_GetPartyProfessionInfo(-2, "Primary") & @TAB & "secondary=" & Party_GetPartyProfessionInfo(-2, "Secondary")
+            $reply &= @TAB & "smiting=" & Attribute_GetPartyAttributeInfo(14, 0, "BaseLevel") & @TAB & "shadow=" & Attribute_GetPartyAttributeInfo(31, 0, "BaseLevel")
             $reply &= @TAB & "game_pid=" & $g_i_GWProcessId & @TAB & "login=" & Agent_GetAgentInfo(-2, "LoginNumber")
             $reply &= @TAB & "party=" & Party_GetMyPartyInfo("PartyID") & @TAB & "leader=" & Party_GetMyPartyPlayerMemberInfo(1, "LoginNumber")
             $reply &= @TAB & "heroes=" & Party_GetMyPartyInfo("ArrayHeroPartyMemberSize") & @TAB & "henchmen=" & Party_GetMyPartyInfo("ArrayHenchmanPartyMemberSize")

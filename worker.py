@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 import time
 from core import write_ini, read_status
-from game_bridge import GameBridge
+from game_bridge import GameBridge, fields
 
 TOA, UW = 138, 72
 BUILD = 'OwNS44PTceTQmE4O2kxkRQYh'
@@ -72,6 +72,7 @@ class Worker:
         self.last_action = -1000
         self.build_loaded = False
         self.build_time = 0
+        self.build_attempts = 0
         self.target = 0
         self.step = 0
         self.cast_until = 0
@@ -157,33 +158,89 @@ class Worker:
     def all_ready(self):
         return self.exact_party() and all(peer and peer.get('phase') == 'Ready' for _, peer in self.peers())
 
+    def login_wait(self, seconds=.5):
+        """Keep controls and status live while the client logs in or changes maps."""
+        self.mode = read_ini(self.command_path).get('Control', 'Mode', fallback='pause')
+        self.publish()
+        if self.mode == 'stop':
+            return False
+        time.sleep(seconds)
+        return True
+
+    def select_character(self):
+        deadline = self.clock() + 180
+        sorted_names = False
+        attempts, initial_index = 0, None
+        entering = False
+        while self.clock() < deadline:
+            login = fields(self.game.call('login'))
+            if not login.get('alive'):
+                self.error('Guild Wars client exited during character selection')
+                return True
+            if login.get('ingame'):
+                self.s = self.game.snapshot()
+                if self.s.get('instance') == 2 or not self.s.get('login') or not self.s.get('primary'):
+                    self.state = 'Waiting for character and map data'
+                elif str(self.s.get('character', '')).strip().casefold() != self.character.strip().casefold():
+                    self.error('Loaded character does not match the selected account; select the configured character and relaunch')
+                    return True
+                elif self.s.get('instance') != 0:
+                    self.error('Start the character in an outpost')
+                    return True
+                else:
+                    self.change('Travel', 'Character verified; travelling to Temple of the Ages')
+                    return True
+            elif login.get('selection') and login.get('index', -1) >= 0:
+                self.state = 'Selecting configured character'
+                if not sorted_names:
+                    # Match Encounter ReBuilt: normalize order before searching right.
+                    self.game.call('key', 'N')
+                    sorted_names = True
+                elif str(login.get('selected', '')).strip().casefold() == self.character.strip().casefold():
+                    self.state = 'Entering game with configured character'
+                    self.game.call('key', 'ENTER')
+                    entering = True
+                elif entering:
+                    self.error('Character selection changed while entering the game')
+                    return True
+                elif attempts >= 20 or (attempts > 1 and login['index'] == initial_index):
+                    self.error('Configured character was not found on this account')
+                    return True
+                else:
+                    if initial_index is None:
+                        initial_index = login['index']
+                    self.game.call('key', 'RIGHT')
+                    attempts += 1
+            else:
+                self.state = 'Waiting for account login / character screen'
+            if not self.login_wait():
+                return False
+        self.error('Character selection or map loading timed out')
+        return True
+
     def attach(self):
         deadline = self.clock() + 180
-        launched = False
+        launched_pid = None
         while self.clock() < deadline:
             self.mode = read_ini(self.command_path).get('Control', 'Mode', fallback='pause')
             if self.mode == 'stop':
                 return False
             self.publish()
-            if self.game.call('attach', self.character) == '1':
-                self.s = self.game.snapshot()
-                if self.s.get('instance') != 0:
-                    self.error('Start the character in an outpost')
-                    return True
-                self.change('Travel', 'Travelling to Temple of the Ages')
-                return True
-            if not launched and self.member.get('launchdirect') == '1':
-                launched = True
+            command, target = ('attach_pid', launched_pid) if launched_pid else ('attach', self.character)
+            if self.game.call(command, target) == '1':
+                return self.select_character()
+            if launched_pid is None and self.member.get('launchdirect') == '1':
                 self.state = 'Launching account from local characters.ini'
                 self.publish()
-                result = self.game.call('launch', self.member.get('charactersini', ''),
+                launched_pid = int(self.game.call('launch', self.member.get('charactersini', ''),
                                         self.member.get('section', self.character), self.member.get('exepath', ''),
-                                        self.member.get('cryptoseed', 'Encounter_ReBuilt.au3'))
-                if int(result) <= 0:
+                                        self.member.get('cryptoseed', 'Encounter_ReBuilt.au3')))
+                if launched_pid <= 0:
                     self.error('Account launch failed; check encryption seed and local game paths')
                     return True
                 deadline = self.clock() + 180
-            time.sleep(3)
+            if not self.login_wait(3):
+                return False
         self.error('Character login/attachment timed out')
         return True
 
@@ -209,6 +266,9 @@ class Worker:
                 self.error('Disconnected or map load timed out')
             return True
         self.unavailable_since = None
+        if str(self.s.get('character', '')).strip().casefold() != self.character.strip().casefold():
+            self.error('Active character changed; relaunch the selected account')
+            return True
         if self.mode == 'pause' and self.s.get('instance') == 0:
             if self.phase != 'Paused':
                 self.change('Paused', 'Paused in outpost')
@@ -237,16 +297,34 @@ class Worker:
             if not inv.get('mobstoppers') or not inv.get('free'):
                 self.error('Farm mode requires an Everlasting Mobstopper and a free bag slot')
                 return
-        if not self.build_loaded:
-            if self.game.call('build', BUILD) != '1':
-                self.error('Could not load the original farm template')
+        primary = int(self.s.get('primary', 0))
+        if not primary:
+            self.state = 'Waiting for profession data'
+            if self.elapsed() > 60:
+                self.error('Character profession data did not load')
+            return
+        if primary != 7:
+            self.error('The Skelefarm template requires an Assassin primary profession')
+            return
+        verified = (int(self.s.get('secondary', 0)) == 3
+                    and int(self.s.get('smiting', 0)) == 12 and int(self.s.get('shadow', 0)) == 12
+                    and [int(x) for x in str(self.s.get('skills', '')).split(',') if x] == SKILLS)
+        if not self.build_loaded or not verified:
+            if self.build_attempts and self.clock() - self.build_time < 15:
+                self.state = 'Waiting for template professions, attributes and skills'
                 return
-            self.build_loaded, self.build_time = True, self.clock()
+            if self.build_attempts >= 3:
+                self.error('Farm template verification failed; check Monk secondary, attribute points and unlocked skills')
+                return
+            self.build_attempts += 1
+            self.state = 'Loading original Assassin/Monk farm template'
+            self.publish()
+            loaded = self.game.call('build', BUILD) == '1'
+            self.build_loaded, self.build_time = loaded, self.clock()
+            if not loaded:
+                self.state = 'Template load pending; checking secondary profession and unlocks'
             return
         if self.clock() - self.build_time < 2.5:
-            return
-        if [int(x) for x in str(self.s.get('skills', '')).split(',') if x] != SKILLS:
-            self.error('Skill template missing/locked or changed')
             return
         cooldowns = self.cooldowns()
         if any(cooldowns[i] > 0 for i in (3, 4, 5, 6)):

@@ -2,6 +2,7 @@ import copy
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from core import DEFAULT, snapshot, write_control, read_status
 from worker import Worker, SKILLS
 
@@ -17,7 +18,7 @@ class Clock:
 class FakeGame:
     def __init__(self):
         self.calls = []
-        self.s = dict(map=138, instance=0, ingame=1, alive=1, login=11, leader=11,
+        self.s = dict(character="Alpha Farm Char", primary=7, secondary=3, smiting=12, shadow=12, map=138, instance=0, ingame=1, alive=1, login=11, leader=11,
                       roster='11:1', heroes=0, henchmen=0, party=3, region=-2, district=1,
                       language=0, x=-4100, y=19829, rendering=0, dead=0, casting=0,
                       skills=','.join(map(str, SKILLS)), cooldowns='0,0,0,0,0,0,0,0')
@@ -55,6 +56,86 @@ class PythonWorkerTests(unittest.TestCase):
     def phase(self, phase):
         self.worker.change(phase, 'test')
         self.worker.s = dict(self.game.s)
+
+    def login_script(self, frames):
+        original = self.game.call
+        frames = iter(frames)
+        def call(name, *args):
+            if name == 'login':
+                self.game.calls.append((name, *args))
+                return next(frames)
+            return original(name, *args)
+        self.game.call = call
+        self.worker.login_wait = lambda seconds=.5: (self.clock.advance(seconds) or True)
+
+    def test_character_selection_matches_encounter_sequence(self):
+        self.login_script([
+            'alive=1\tselection=1\tindex=2\tselected=Wrong Char',
+            'alive=1\tselection=1\tindex=0\tselected=Another Char',
+            'alive=1\tselection=1\tindex=1\tselected=Alpha Farm Char',
+            'alive=1\tingame=1',
+        ])
+        self.assertTrue(self.worker.select_character())
+        self.assertEqual([c for c in self.game.calls if c[0] == 'key'],
+                         [('key', 'N'), ('key', 'RIGHT'), ('key', 'ENTER')])
+        self.assertEqual(self.worker.phase, 'Travel')
+
+    def test_missing_character_never_enters_wrong_character(self):
+        self.login_script(['alive=1\tselection=1\tindex=0\tselected=Wrong'] + [
+            f'alive=1\tselection=1\tindex={i}\tselected=Wrong' for i in (0, 1, 0)])
+        self.worker.select_character()
+        self.assertEqual(self.worker.phase, 'Error')
+        self.assertNotIn(('key', 'ENTER'), self.game.calls)
+
+    def test_wrong_loaded_character_blocks_travel_and_build(self):
+        self.game.s['character'] = 'Wrong Character'
+        self.login_script(['alive=1\tingame=1'])
+        self.worker.select_character()
+        self.assertEqual(self.worker.phase, 'Error')
+        self.assertFalse(any(c[0] in ('build', 'travel') for c in self.game.calls))
+
+    def test_new_launch_attaches_returned_pid(self):
+        original = self.game.call
+        self.worker.member['launchdirect'] = '1'
+        def call(name, *args):
+            if name in ('attach', 'launch', 'attach_pid'):
+                self.game.calls.append((name, *args))
+                return {'attach': '0', 'launch': '4321', 'attach_pid': '1'}[name]
+            return original(name, *args)
+        self.game.call = call
+        self.worker.login_wait = lambda seconds=3: True
+        self.worker.select_character = lambda: True
+        self.assertTrue(self.worker.attach())
+        self.assertIn(('attach_pid', 4321), self.game.calls)
+        self.assertEqual(sum(c[0] == 'attach' for c in self.game.calls), 1)
+
+    def test_template_waits_for_attributes_and_all_skills(self):
+        self.game.s.update(secondary=0, smiting=0, shadow=0, skills='0,0,0,0,0,0,0,0')
+        self.phase('Prepare')
+        self.worker.tick()
+        self.clock.advance(3)
+        self.worker.tick()
+        self.assertEqual(self.worker.phase, 'Prepare')
+        self.assertEqual(sum(c[0] == 'build' for c in self.game.calls), 1)
+        self.game.s.update(secondary=3, smiting=12, shadow=12, skills=','.join(map(str, SKILLS)))
+        self.worker.tick()
+        self.assertEqual(self.worker.phase, 'Party')
+
+    def test_wrong_primary_fails_before_loading_template(self):
+        self.game.s['primary'] = 1
+        self.phase('Prepare')
+        self.worker.tick()
+        self.assertEqual(self.worker.phase, 'Error')
+        self.assertFalse(any(c[0] == 'build' for c in self.game.calls))
+
+    def test_template_verification_has_bounded_retries(self):
+        self.game.s['smiting'] = 0
+        self.phase('Prepare')
+        for _ in range(4):
+            self.worker.tick()
+            self.clock.advance(16)
+        self.assertEqual(self.worker.phase, 'Error')
+        self.assertEqual(sum(c[0] == 'build' for c in self.game.calls), 3)
 
     def test_combat_test_skips_mobstopper_and_free_slot_gates(self):
         self.phase('Prepare')
