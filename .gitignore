@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.spec
+settings.json
+sessions.json
+*.log
+*.status.ini
+*.command.ini
