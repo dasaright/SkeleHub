@@ -268,7 +268,7 @@ class EconomyWorkflowTests(unittest.TestCase):
             self.tick()
             if self.e.read_shared()['mode'] == 'farm':
                 break
-        self.assertIn(('travel', 642, -2, 1, 0), self.game.calls)
+        self.assertIn(('travel', 642, 0, 0, 0), self.game.calls)
         self.assertIn(('npc_name', 'Roland'), self.game.calls)
         self.assertEqual(self.game.inv['ecto'], 4)
         self.assertEqual(total_value(self.game.inv), 900000)
@@ -317,7 +317,7 @@ class EconomyWorkflowTests(unittest.TestCase):
             if not self.e.currency_pending:
                 break
         self.assertFalse(self.e.currency_pending)
-        self.assertIn(('travel', 642, -2, 1, 0), self.game.calls)
+        self.assertIn(('travel', 642, 0, 0, 0), self.game.calls)
         self.assertIn(('npc_name', 'Roland'), self.game.calls)
         self.assertEqual(self.game.inv['ecto'], 4)
         self.assertEqual(total_value(self.game.inv), 900000)

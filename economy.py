@@ -263,13 +263,14 @@ class Economy:
             w.change('AwaitTurnIn', 'All accounts Empty on Plat — preparing independent turn-ins')
         return True
 
-    def travel(self, map_id, allowed=None, district=None):
+    def travel(self, map_id, allowed=None, district=None, region=None):
         allowed = allowed or {map_id}
-        district = district or int(self.progress.get('district', 1))
-        if self.w.s.get('map') in allowed and self.w.s.get('instance') == 0 and self.w.s.get('district') == district and self.w.s.get('region') == self.w.destination['region'] and self.w.s.get('language') == self.w.destination['language']:
+        district = int(self.progress.get('district', 1)) if district is None else district
+        region = self.w.destination['region'] if region is None else region
+        if self.w.s.get('map') in allowed and self.w.s.get('instance') == 0 and (district == 0 or self.w.s.get('district') == district) and self.w.s.get('region') == region and self.w.s.get('language') == self.w.destination['language']:
             return True
         if self.due(5):
-            self.w.game.call('travel', map_id, self.w.destination['region'], district, self.w.destination['language'])
+            self.w.game.call('travel', map_id, region, district, self.w.destination['language'])
         if self.w.clock() - self.stage_since > 90:
             self.block('Economy travel timed out; verify outpost access and district')
         return False
@@ -284,14 +285,17 @@ class Economy:
         if w.phase != phase and not self.hold:
             w.change(phase, 'Handle Currency — independent Eye of the North test' if manual else 'Turn In Mobs — independent account workflow')
         stage = self.progress['stage']
-        w.state = ('Handle Currency — ' if manual else 'Turn In Mobs — ') + stage
+        if stage == 'embark':  # Resume old persisted sessions at the renamed destination.
+            self.stage('eye_of_the_north')
+            stage = 'eye_of_the_north'
+        w.state = ('Handle Currency — ' if manual else 'Turn In Mobs — ') + ('Eye of the North — Roland' if stage in ('eye_of_the_north', 'trader', 'quote', 'buy_withdraw', 'buy_wait') else stage)
         if stage == 'leave':
             w.game.call('leave')
             self.stage('separate')
         elif stage == 'separate':
             roster = [p for p in str(w.s.get('roster', '')).split(',') if p]
             if len(roster) <= 1 and not w.s.get('heroes') and not w.s.get('henchmen'):
-                self.stage('embark' if manual else 'assess')
+                self.stage('eye_of_the_north' if manual else 'assess')
             elif self.due():
                 w.game.call('leave')
             if w.clock() - self.stage_since > 20:
@@ -300,7 +304,7 @@ class Economy:
             if self.inv.get('tot', 0):
                 self.stage('bank')
             elif self.inv.get('storage_gold', 0) > 800_000 and total_value(self.inv) > 900_000:
-                self.stage('embark')
+                self.stage('eye_of_the_north')
             elif self.inv.get('captured', 0) <= 2:
                 self.stage('home')
             elif self.inv.get('gold', 0) >= 99_000:
@@ -361,12 +365,12 @@ class Economy:
                 self.block('Gold deposit did not confirm')
         elif stage == 'district':
             self.stage('assess', district=2 if self.progress.get('district', 1) == 1 else 1)
-        elif stage == 'embark':
-            if self.travel(EYE_OF_THE_NORTH):
+        elif stage == 'eye_of_the_north':
+            if self.travel(EYE_OF_THE_NORTH, allowed={642, 821}, district=0, region=0):
                 self.stage('trader')
         elif stage == 'trader':
-            if w.s['map'] != EYE_OF_THE_NORTH:
-                self.stage('embark')
+            if w.s['map'] not in (642, 821):
+                self.stage('eye_of_the_north')
                 return
             npc = int(w.game.call('npc_name', 'Roland'))
             if npc:
@@ -378,6 +382,9 @@ class Economy:
             if w.clock() - self.stage_since > 90:
                 self.block('Roland could not be reached at Eye of the North; trader path needs live validation')
         elif stage == 'quote':
+            if w.s.get('map') not in (642, 821):
+                self.stage('eye_of_the_north')
+                return True
             quote = int(w.game.call('ecto_quote'))
             decision = purchase_decision(self.inv, quote)
             if decision == 'quote':

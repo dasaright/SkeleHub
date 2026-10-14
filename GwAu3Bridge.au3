@@ -87,7 +87,7 @@ Func BridgeDispatch(ByRef $a)
                 $chosen = Utils_MakeInt32(PreGame_ChosenCharacter())
                 If $chosen >= 0 And $chosen < 256 Then $chosenName = StringStripWS(PreGame_CharName($chosen), 3)
             EndIf
-            Return "alive=" & Int(ProcessExists($g_i_GWProcessId) <> 0) & @TAB & "ingame=" & Int(Core_IsIngame()) & @TAB & "selection=" & Int(Core_IsCharacterSelection()) & @TAB & "index=" & $chosen & @TAB & "selected=" & $chosenName
+            Return "game_pid=" & $g_i_GWProcessId & @TAB & "alive=" & Int(ProcessExists($g_i_GWProcessId) <> 0) & @TAB & "ingame=" & Int(Core_IsIngame()) & @TAB & "selection=" & Int(Core_IsCharacterSelection()) & @TAB & "index=" & $chosen & @TAB & "selected=" & $chosenName
         Case "key"
             If $a[0] <> 2 Then Return "0"
             If Not Core_IsCharacterSelection() Then Return "0"

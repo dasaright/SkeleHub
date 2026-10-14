@@ -100,3 +100,7 @@ Simplified account input to character, executable, email and password; derive an
 ## v0.4.5
 
 Add 1–10 account bulk form with numbered fields, whole-batch validation and credential rollback. Fill teams to GW party capacity and create overflow teams. Relocate runtime data to sibling Files and copy/migrate old user-profile settings and external credential configs without overwriting portable data. Clean recognized retired executable versions only when inactive, and clear completed update payloads after startup. Reset PyInstaller environment in helper launch, success restart and rollback restart to avoid stale onefile parent PID failures. Add actual frozen onefile updater/restart verification to release CI.
+
+## v0.4.6
+
+Reduce disconnected/loading stall timeout to 10 seconds, detect login-screen stalls and stale bridge heartbeats, and expedite owned-process closure/relaunch without the additional error grace period. Keep ordinary party waiting and intentional stops unchanged. Rename legacy embark stage to explicit Eye of the North and migrate persisted progress; use automatic America district selection and guard quote requests by merchant map.

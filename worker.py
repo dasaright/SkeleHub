@@ -93,6 +93,7 @@ class Worker:
         self.return_sent = False
         self.render_disabled = bool(int(self.member.get('disablerendering', '0')))
         self.unavailable_since = None
+        self.restart_required = False
         self.waypoint = None
         self.kill_verified = False
         self.combat_started = False
@@ -129,7 +130,7 @@ class Worker:
     def publish(self):
         fields = {'Stamp': f'{datetime.now():%Y/%m/%d %H:%M:%S}', 'PID': os.getpid(),
                   'LaunchPID': os.getppid() if getattr(sys, 'frozen', False) else os.getpid(),
-                  'WorkerVersion': VERSION, 'BuildTemplate': BUILD, 'BuildSkills': ','.join(map(str, SKILLS)),
+                  'WorkerVersion': VERSION, 'RestartRequired': int(self.restart_required), 'BuildTemplate': BUILD, 'BuildSkills': ','.join(map(str, SKILLS)),
                   'BuildAttempts': self.build_attempts, 'BuildInitialized': int(self.build_verified), 'EntryLeader': self.entry_leader_id,
                   'ChargeConfirmed': int(self.charge_confirmed), 'ChargeAttempts': self.charge_attempts,
                   'SmokeConfirmed': int(self.smoke_confirmed), 'SmokeAttempts': self.smoke_attempts,
@@ -209,8 +210,17 @@ class Worker:
         attempts, initial_index = 0, None
         entering = False
         left_at = None
+        login_signature, login_progress_at = None, self.clock()
         while self.clock() < deadline:
             login = fields(self.game.call('login'))
+            self.s['game_pid'] = login.get('game_pid', self.s.get('game_pid', 0))
+            signature = tuple(login.get(k) for k in ('ingame', 'selection', 'index', 'selected'))
+            if signature != login_signature:
+                login_signature, login_progress_at = signature, self.clock()
+            elif self.clock() - login_progress_at > 10:
+                self.restart_required = True
+                self.error('Login or loading screen stalled for over 10 seconds; restarting account')
+                return True
             if not login.get('alive'):
                 self.error('Guild Wars client exited during character selection')
                 return True
@@ -317,8 +327,9 @@ class Worker:
         if not self.s.get('ingame', 1) or self.s.get('instance') == 2:
             if self.unavailable_since is None:
                 self.unavailable_since = self.clock()
-            if self.clock() - self.unavailable_since > 60:
-                self.error('Disconnected or map load timed out')
+            if self.clock() - self.unavailable_since > 10:
+                self.restart_required = True
+                self.error('Disconnected or map loading stalled for over 10 seconds; restarting account')
             return True
         self.unavailable_since = None
         if str(self.s.get('character', '')).strip().casefold() != self.character.strip().casefold():

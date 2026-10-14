@@ -1,4 +1,4 @@
-# Skelefarm Hub / Python SkeleBot — v0.4.5
+# Skelefarm Hub / Python SkeleBot — v0.4.6
 
 A Windows Python hub and Python farm controller for selected Guild Wars accounts. The desktop uses EncounterHub's PySide6 implementation pattern and the same charcoal/teal stylesheet, checkboxes, per-row controls, and saved column widths.
 
@@ -132,7 +132,7 @@ Run `Start-Hub.cmd` and accept administrator elevation. Set the x86 `AutoIt3.exe
 Keep these together:
 
 - `Skelefarm Hub.exe`
-- `Skelefarm-worker-0.4.5.exe`
+- `Skelefarm-worker-0.4.6.exe`
 
 The Python worker embeds its versioned x86 bridge. Target PCs need neither Python nor AutoIt once built. Pin the hub executable to the taskbar.
 
@@ -158,7 +158,7 @@ Version 0.3 adds Python farm-scenario tests and a Qt desktop smoke test. Live ga
 
 Unexpected client exits are detected by the hub even if the worker has not reported an error. Recovery restarts the account in the same team session, preserving Run/Pause. Stop cancels recovery. Three consecutive failures stop retries; two minutes of healthy operation reset that allowance. Rejoining uses the existing ToA party assembly workflow.
 
-### Bulk accounts and portable data (v0.4.5)
+### Bulk accounts and portable data (v0.4.6)
 
 Add Account opens a count dropdown from 1–10 and shows that many numbered Character Name, Guild Wars Executable, Email and Password fields. Reducing/increasing the count retains typed input. The batch is validated before saving; a credential-write failure restores previous files/settings. New accounts fill available teams up to eight members and create another team as needed; use the main table to rearrange them.
 
@@ -167,3 +167,9 @@ The hub creates `Files` beside its executable and stores settings, managed chara
 Updates start the replacement hub with a fresh PyInstaller environment, fixing the "Invalid originating onefile parent process (PID not found)" error even with no workers running. Successful updates remove unused older versioned worker/bridge executables while preserving active workers and all user files; completed installer payloads are removed after startup with small logs retained under Files/logs. Failed updates retain diagnostic staging and rollback files.
 
 For the first upgrade from v0.4.4 or earlier, if the old updater displays that error, close it and start the newly installed Skelefarm Hub.exe manually (or extract this release ZIP into the bot folder). Later updates use the corrected handoff.
+
+### Loading watchdog and currency districts (v0.4.6)
+
+Disconnected/map-loading states and unchanged login/loading screens lasting over 10 seconds request immediate account recovery. A stale worker/bridge heartbeat over 10 seconds also forces only that tracked account's client/worker process tree to close, then relaunches into the existing team session. Normal party waiting and Pause do not trigger the watchdog. Explicit Stop still cancels recovery; the existing consecutive retry limit remains.
+
+Currency status explicitly displays Eye of the North — Roland. Old persisted `embark` stages are migrated to `eye_of_the_north`; they do not target Embark Beach. Ectoplasm trips request Eye of the North with automatic district assignment in America to avoid closed fixed International districts. A quote/purchase is never requested outside Eye of the North (including its Wintersday map); the trip returns to the configured ToA district afterward.

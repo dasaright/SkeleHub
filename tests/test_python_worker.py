@@ -128,6 +128,24 @@ class PythonWorkerTests(unittest.TestCase):
         self.assertIn(('attach_pid', 4321), self.game.calls)
         self.assertEqual(sum(c[0] == 'attach' for c in self.game.calls), 1)
 
+    def test_loading_stall_restarts_after_ten_seconds_and_resets_after_recovery(self):
+        self.phase('Travel')
+        self.game.s.update(instance=2, ingame=0)
+        self.worker.tick()
+        self.clock.advance(9)
+        self.worker.tick()
+        self.assertNotEqual(self.worker.phase, 'Error')
+        self.game.s.update(instance=0, ingame=1)
+        self.worker.tick()
+        self.assertIsNone(self.worker.unavailable_since)
+        self.game.s.update(instance=2, ingame=0)
+        self.worker.tick()
+        self.clock.advance(10.1)
+        self.worker.tick()
+        self.assertEqual(self.worker.phase, 'Error')
+        self.assertTrue(self.worker.restart_required)
+        self.assertEqual(read_status(self.worker.status_path)['restartrequired'], '1')
+
     def test_template_waits_for_attributes_and_all_skills(self):
         self.game.s.update(secondary=0, smiting=0, shadow=0, skills='0,0,0,0,0,0,0,0')
         self.phase('Prepare')

@@ -53,6 +53,27 @@ class RecoveryTests(unittest.TestCase):
             self.assertEqual(control['Control']['Mode'], 'pause')
             self.assertTrue(hub.busy)
 
+    def test_stalled_loading_restarts_immediately_without_extra_error_delay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            hub = self.setup_hub(directory)
+            write_ini(Path(directory) / 'one.status.ini', {'Worker': {'PID': 123, 'Phase': 'Error', 'GamePID': 456, 'RestartRequired': 1}})
+            with patch('controller.dismiss_crash_dialogs', return_value=[]), patch('controller.alive', return_value=True), patch('controller.terminate_stalled_account') as terminate, patch('controller.time.monotonic', return_value=100):
+                Hub.recovery_tick(hub)
+            terminate.assert_called_once_with(123, 456)
+            self.assertTrue(hub._recovery[(directory, 'one')]['pending'])
+
+    def test_stale_bridge_heartbeat_restarts_owned_account_even_if_worker_alive(self):
+        import os
+        import time
+        with tempfile.TemporaryDirectory() as directory:
+            hub = self.setup_hub(directory)
+            path = Path(directory) / 'one.status.ini'
+            write_ini(path, {'Worker': {'PID': 123, 'Phase': 'Fight', 'GamePID': 456}})
+            os.utime(path, (time.time() - 11, time.time() - 11))
+            with patch('controller.dismiss_crash_dialogs', return_value=[]), patch('controller.alive', return_value=True), patch('controller.terminate_stalled_account') as terminate, patch('controller.time.monotonic', return_value=100):
+                Hub.recovery_tick(hub)
+            terminate.assert_called_once_with(123, 456)
+
     def test_manual_stop_cancels_pending_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
             hub = self.setup_hub(directory)

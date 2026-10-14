@@ -27,6 +27,17 @@ CONFIG = DATA / 'settings.json'
 SESSIONS = DATA / 'sessions.json'
 
 
+def terminate_stalled_account(worker_pid, game_pid):
+    """Close only the tracked account processes; no process-name-wide kills."""
+    if os.name != 'nt':
+        return
+    for pid in dict.fromkeys([game_pid, worker_pid]):
+        if int(pid or 0) > 0:
+            subprocess.Popen(['taskkill.exe', '/PID', str(int(pid)), '/T', '/F'],
+                             creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def alive(pid):
     if os.name != 'nt' or not pid:
         return False
@@ -508,7 +519,7 @@ class Hub:
             directory = Path(session['dir'])
             control = configparser.ConfigParser(interpolation=None)
             control.read(directory / (account['id'] + '.command.ini'), encoding='utf-16')
-            status = read_status(directory / (account['id'] + '.status.ini'))
+            status = read_status(directory / (account['id'] + '.status.ini'), max_age=3600)
             active.append((account, session, directory, control, status))
         pids = {int(status.get('gamepid', 0)) for _, _, _, _, status in active} - {0}
         dialogs = dismiss_crash_dialogs(pids, [a.get('gw_exe', '') for a, _, _, c, _ in active if c.get('Control', 'Mode', fallback='stop') != 'stop'])
@@ -526,7 +537,10 @@ class Hub:
             crash = any(d['pid'] == game_pid or (not game_pid and os.path.normcase(d['path']) == os.path.normcase(account.get('gw_exe', ''))) for d in dialogs)
             identity = int(status.get('launchpid', status.get('pid', 0))) == worker_pid
             client_exited = identity and game_pid > 0 and not alive(game_pid)
-            failed = crash or client_exited or (identity and status.get('phase') == 'Error') or not alive(worker_pid)
+            status_path = directory / (aid + '.status.ini')
+            stale = identity and status_path.exists() and time.time() - status_path.stat().st_mtime > 10
+            restart_now = identity and (status.get('restartrequired') == '1' or stale)
+            failed = restart_now or crash or client_exited or (identity and status.get('phase') == 'Error') or not alive(worker_pid)
             if state['pending']:
                 if not alive(worker_pid) and not self.busy:
                     write_control(directory / (aid + '.command.ini'), mode=state.get('resume_mode', 'run'), close_game=False)
@@ -549,13 +563,15 @@ class Hub:
             state.pop('healthy_since', None)
             if state['since'] is None:
                 state['since'] = now
-            if not crash and now - state['since'] < 8:
+            if not crash and not restart_now and now - state['since'] < 8:
                 continue
             if state['attempts'] >= 3:
                 continue
             state['attempts'] += 1
             state.update(pending=True, since=now, resume_mode=mode if mode in ('run', 'pause') else state.get('resume_mode', 'run'))
             write_control(directory / (aid + '.command.ini'), mode='stop', close_game=True, recover=True)
+            if restart_now:
+                terminate_stalled_account(worker_pid, game_pid)
             self.notice.set(f"Restarting {account['character']} after failure ({state['attempts']}/3); crash reports use Don't Send.")
 
     def refresh(self):
