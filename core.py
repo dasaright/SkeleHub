@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import time
 import uuid
+from farm_build import BUILD
 
 DEFAULT = {
     'autoit': r'C:\Program Files (x86)\AutoIt3\AutoIt3.exe',
@@ -97,7 +98,7 @@ def snapshot(config, team, session_dir: Path):
         'Region': settings['region'], 'Language': settings['language'],
         'District': settings['district'], 'AssembleOnly': int(settings['assemble_only']),
         'TestMode': int(settings.get('test_mode', True)),
-        'Build': 'OwNS44PTTQ4ORQmE2kxkYhAA',
+        'Build': BUILD,
         'SkeletonModel1': 2392, 'SkeletonModel2': 2393, 'GrenthModel': 1995,
     }}
     for i, a in enumerate(members, 1):

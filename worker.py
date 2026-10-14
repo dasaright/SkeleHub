@@ -14,9 +14,8 @@ from core import write_ini, read_status, write_control
 from game_bridge import GameBridge, fields
 
 TOA, UW = 138, 72
-BUILD = 'OwNS44PTTQ4ORQmE2kxkYhAA'
-SKILLS = [1043, 952, 1041, 294, 2358, 2353, 2136, 0]
-SEQUENCE = [1, 2, 3, 4, 5, 6, 7]
+from farm_build import BUILD, SKILLS, SEQUENCE
+from version import VERSION
 
 
 def process_alive(pid):
@@ -75,6 +74,8 @@ class Worker:
         self.build_loaded = False
         self.build_time = 0
         self.build_attempts = 0
+        self.prepare_ready_at = 0
+        self.combat_started_at = None
         self.target = 0
         self.step = 0
         self.cast_until = 0
@@ -95,6 +96,11 @@ class Worker:
             output.write(f'{datetime.now():%Y/%m/%d %H:%M:%S} | {self.phase} | {text}\n')
 
     def change(self, phase, message):
+        if phase == 'Prepare' and self.phase != 'Prepare':
+            self.build_attempts = 0
+            self.build_loaded = False
+            self.build_time = 0
+            self.prepare_ready_at = self.clock() + 2.5
         self.phase, self.state = phase, message
         self.phase_started = self.clock()
         self.last_action = -1000
@@ -116,6 +122,8 @@ class Worker:
     def publish(self):
         fields = {'Stamp': f'{datetime.now():%Y/%m/%d %H:%M:%S}', 'PID': os.getpid(),
                   'LaunchPID': os.getppid() if getattr(sys, 'frozen', False) else os.getpid(),
+                  'WorkerVersion': VERSION, 'BuildTemplate': BUILD, 'BuildSkills': ','.join(map(str, SKILLS)),
+                  'BuildAttempts': self.build_attempts,
                   'Character': self.character, 'Phase': self.phase, 'State': self.state, 'Mode': self.mode,
                   'Cycle': self.cycle, 'TestMode': int(self.test_mode), 'Kills': self.kills,
                   'KillVerified': int(self.kill_verified), 'Target': self.target,
@@ -321,6 +329,9 @@ class Worker:
         if not self.location_matches():
             self.change('Travel', 'Regrouping in configured district')
             return
+        if self.clock() < self.prepare_ready_at:
+            self.state = 'Waiting for town profession and skill data to settle'
+            return
         if not self.test_mode:
             inv = self.game.inventory()
             if not inv.get('mobstoppers') or not inv.get('free'):
@@ -346,7 +357,8 @@ class Worker:
                 self.error('Farm template verification failed; check Monk secondary, attribute points and unlocked skills')
                 return
             self.build_attempts += 1
-            self.state = 'Loading original Assassin/Monk farm template'
+            self.log(f'Template {BUILD}, attempt {self.build_attempts}/3; observed primary={primary}, secondary={self.s.get("secondary")}, smiting={self.s.get("smiting")}, shadow={self.s.get("shadow")}, skills={self.s.get("skills")}')
+            self.state = 'Loading current Assassin/Monk farm template'
             self.publish()
             loaded = self.game.call('build', BUILD) == '1'
             self.build_loaded, self.build_time = loaded, self.clock()
@@ -367,10 +379,7 @@ class Worker:
 
     def party(self):
         if self.s.get('map') == UW and self.s.get('instance') == 1:
-            if self.is_leader:
-                self.error('Unexpected UW entry before leader approval')
-            else:
-                self.start_fight()
+            self.start_fight()
             return
         if not self.location_matches():
             self.change('Travel', 'Regrouping in configured district')
@@ -470,6 +479,8 @@ class Worker:
         self.target, self.step, self.cast_until = 0, 0, 0
         self.kill_verified = False
         self.combat_started = False
+        self.combat_started_at = None
+        self.peer_error_since = None
         self.before = self.game.inventory().get('captured', 0) if not self.test_mode else 0
         self.change('Fight', 'Test: waiting for team to load UW' if self.test_mode else 'Finding Skeleton of Dhuum')
 
@@ -542,13 +553,15 @@ class Worker:
         if self.s.get('map') != UW:
             self.finish(False, 'Unexpected map change during run')
             return
-        if self.elapsed() > (60 if self.test_mode else 30):
+        combat_elapsed = self.clock() - self.combat_started_at if self.combat_started_at is not None else self.elapsed()
+        if combat_elapsed > (60 if self.test_mode else 30):
             self.finish(False, 'Skeleton kill/team load timed out' if self.test_mode else 'Capture timed out')
             return
         if self.test_mode and not self.combat_started:
             if not self.all_loaded():
                 return
             self.combat_started = True
+            self.combat_started_at = self.clock()
         if not self.test_mode and self.game.inventory().get('captured', 0) > self.before:
             self.game.call('cancel')
             self.finish(True, 'Capture verified in inventory')

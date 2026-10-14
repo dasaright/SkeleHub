@@ -56,6 +56,8 @@ class PythonWorkerTests(unittest.TestCase):
     def phase(self, phase):
         self.worker.change(phase, 'test')
         self.worker.s = dict(self.game.s)
+        if phase == 'Prepare':
+            self.clock.advance(2.5)
 
     def login_script(self, frames):
         original = self.game.call
@@ -205,6 +207,74 @@ class PythonWorkerTests(unittest.TestCase):
         with patch('worker.process_alive', return_value=True):
             self.assertTrue(self.worker.all_loaded())
         self.assertEqual(self.worker.cycle, 3)
+
+    def test_return_to_town_resets_template_attempt_budget_and_waits_for_data(self):
+        from farm_build import BUILD
+        self.worker.build_attempts = 3
+        self.worker.build_loaded = True
+        self.game.s.update(map=72, instance=1)
+        self.phase('Return')
+        self.game.s.update(map=138, instance=0, skills='0,0,0,0,0,0,0,0')
+        self.worker.tick()
+        self.assertEqual(self.worker.phase, 'Prepare')
+        self.assertEqual(self.worker.build_attempts, 0)
+        self.worker.tick()
+        self.assertFalse(any(c[0] == 'build' for c in self.game.calls))
+        self.game.s['skills'] = ','.join(map(str, SKILLS))
+        self.clock.advance(2.5)
+        self.worker.tick()
+        self.assertIn(('build', BUILD), self.game.calls)
+        self.clock.advance(3)
+        self.worker.tick()
+        self.assertEqual(self.worker.phase, 'Party')
+
+    def test_leader_and_follower_have_identical_cast_and_attack_loops(self):
+        traces = []
+        for leader in (True, False):
+            self.worker.is_leader = leader
+            self.game.calls.clear()
+            self.game.s.update(map=72, instance=1)
+            self.game.target['hp'] = .4
+            self.worker.s = dict(self.game.s)
+            self.worker.start_fight()
+            self.worker.all_loaded = lambda: True
+            for _ in range(9):
+                self.worker.tick()
+                self.clock.advance(1)
+            traces.append([c for c in self.game.calls if c[0] in ('cast', 'attack', 'target')])
+        self.assertEqual(traces[0], traces[1])
+        self.assertEqual([c[1] for c in traces[0] if c[0] == 'cast'][:7], SEQUENCE)
+
+    def test_combat_deadline_starts_after_team_readiness_for_both_roles(self):
+        for leader in (True, False):
+            self.worker.is_leader = leader
+            self.game.s.update(map=72, instance=1)
+            self.worker.s = dict(self.game.s)
+            self.worker.start_fight()
+            self.worker.all_loaded = lambda: True
+            self.clock.advance(55)
+            self.worker.tick()
+            self.clock.advance(6)
+            self.worker.tick()
+            self.assertEqual(self.worker.phase, 'Fight')
+
+    def test_canonical_template_decodes_to_verified_professions_attributes_and_slots(self):
+        from farm_build import BUILD
+        alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+        bits = ''.join(f'{alphabet.index(c):06b}'[::-1] for c in BUILD)
+        def take(n):
+            nonlocal bits
+            value = int(bits[:n][::-1], 2)
+            bits = bits[n:]
+            return value
+        take(4)
+        take(4)
+        width = take(2) * 2 + 4
+        self.assertEqual((take(width), take(width)), (7, 3))
+        count, width = take(4), take(4) + 4
+        self.assertEqual(dict((take(width), take(4)) for _ in range(count)), {14: 12, 31: 12})
+        width = take(4) + 8
+        self.assertEqual([take(width) for _ in range(8)], SKILLS)
 
     def test_combat_test_skips_mobstopper_and_free_slot_gates(self):
         self.phase('Prepare')
