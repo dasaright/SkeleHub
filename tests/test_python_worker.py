@@ -140,9 +140,9 @@ class PythonWorkerTests(unittest.TestCase):
         self.assertEqual(self.worker.phase, 'Error')
         self.assertEqual(sum(c[0] == 'build' for c in self.game.calls), 3)
 
-    def test_new_template_skips_empty_first_slot(self):
-        self.assertEqual(SKILLS[0], 0)
-        self.assertNotIn(1, SEQUENCE)
+    def test_new_template_skips_empty_eighth_slot(self):
+        self.assertEqual(SKILLS[7], 0)
+        self.assertNotIn(8, SEQUENCE)
 
     def test_hub_exit_stops_worker_even_with_run_command(self):
         self.phase('Party')

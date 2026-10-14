@@ -13,9 +13,9 @@ from core import write_ini, read_status, write_control
 from game_bridge import GameBridge, fields
 
 TOA, UW = 138, 72
-BUILD = 'OwNS44PTAATQmE4O2kxkRQYh'
-SKILLS = [0, 1043, 294, 952, 2358, 2353, 1041, 2136]
-SEQUENCE = [2, 4, 7, 3, 5, 6, 8]
+BUILD = 'OwNS44PTTQ4ORQmE2kxkYhAA'
+SKILLS = [1043, 952, 1041, 294, 2358, 2353, 2136, 0]
+SEQUENCE = [1, 2, 3, 4, 5, 6, 7]
 
 
 def process_alive(pid):
@@ -347,7 +347,7 @@ class Worker:
         if self.clock() - self.build_time < 2.5:
             return
         cooldowns = self.cooldowns()
-        if any(cooldowns[i] > 0 for i in (3, 4, 5, 6)):
+        if any(cooldowns[i] > 0 for i in (2, 4, 5, 6)):
             self.state = 'Waiting for damage skills to recharge'
             if self.elapsed() > 90:
                 self.error('Skills did not recharge')
@@ -489,7 +489,7 @@ class Worker:
         if (slot == 6 and agent.get('hp', 1) >= .49) or self.cooldowns().get(slot, 0) > 0:
             self.step += 1
             return
-        target = self.target if slot in (3, 4, 5, 6) else -2
+        target = self.target if slot in (2, 4, 5, 6) else -2
         delay = float(self.game.call('cast', slot, target))
         self.cast_until = self.clock() + max(.3, delay)
         self.step += 1
