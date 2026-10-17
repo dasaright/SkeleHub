@@ -9,6 +9,7 @@ import subprocess
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import Qt, QTimer, QSignalBlocker
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QCheckBox, QTableWidget, QTableWidgetItem, QHeaderView,
     QAbstractItemView, QFileDialog, QMessageBox, QDialog, QFormLayout, QLineEdit,
@@ -18,8 +19,8 @@ from core import DEFAULT, atomic_text, write_control, read_status
 from qt_style import STYLE
 from version import VERSION
 
-COLUMNS = ('select', 'character', 'team', 'role', 'status', 'render', 'pause', 'resume', 'stop', 'currency', 'runs', 'fails', 'kills', 'captured', 'plat', 'storage_plat', 'skeletons', 'funding', 'dat')
-CAPTIONS = ('Select', 'Character', 'Team', 'Role', 'Bot Status', 'Disable Rendering', 'Pause', 'Resume', 'Stop', 'Handle Currency', 'Runs', 'Fails', 'Kills', 'Captured', 'Carried Plat', 'Storage Plat', 'Skeletons', 'Funding', 'GW Dat')
+COLUMNS = ('select', 'character', 'team', 'role', 'status', 'render', 'pause', 'resume', 'stop', 'currency', 'tot', 'runs', 'fails', 'kills', 'captured', 'plat', 'storage_plat', 'skeletons', 'funding', 'dat')
+CAPTIONS = ('Select', 'Character', 'Team', 'Role', 'Bot Status', 'Disable Rendering', 'Pause', 'Resume', 'Stop', 'Handle Currency', 'Open ToT', 'Runs', 'Fails', 'Kills', 'Captured', 'Carried Plat', 'Storage Plat', 'Skeletons', 'Funding', 'GW Dat')
 
 
 class Dialogs:
@@ -223,6 +224,8 @@ class Desktop(QMainWindow):
         self.rows, self.widgets = {}, {}
         self.root = RootAdapter(self)
         self.setWindowTitle(f'Skelefarm Hub {VERSION}')
+        assets = Path(getattr(sys, '_MEIPASS', engine.ROOT)) / 'assets'
+        self.setWindowIcon(QIcon(str(assets / 'skele-taco.ico')))
         self.resize(1450, 680)
         self.setMinimumSize(950, 480)
         central = QWidget()
@@ -232,6 +235,10 @@ class Desktop(QMainWindow):
         outer.setSpacing(12)
         top = QHBoxLayout()
         outer.addLayout(top)
+        logo = QLabel()
+        logo.setObjectName('skele_logo')
+        logo.setPixmap(QPixmap(str(assets / 'skele-taco.png')).scaled(56, 56, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        top.addWidget(logo)
         title = QLabel('Skelefarm Hub')
         title.setStyleSheet('font-size:24px;font-weight:600;color:#52d4ba;')
         top.addWidget(title)
@@ -270,7 +277,7 @@ class Desktop(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         header.setMinimumSectionSize(60)
         widths = self.config.get('column_widths', {})
-        defaults = (65, 200, 110, 80, 260, 145, 80, 80, 80, 140, 65, 65, 65, 80, 100, 100, 85, 140, 240)
+        defaults = (65, 200, 110, 80, 260, 145, 80, 80, 80, 140, 100, 65, 65, 65, 80, 100, 100, 85, 140, 240)
         self.loading_widths = True
         for i, key in enumerate(COLUMNS):
             header.resizeSection(i, int(widths.get(key, defaults[i])))
@@ -282,7 +289,7 @@ class Desktop(QMainWindow):
         outer.addLayout(footer)
         for label, callback in [('Launch All', self.launch_all), ('Launch Selected', self.launch), ('Pause Teams', lambda: self.command('pause')),
                                 ('Resume Teams', lambda: self.command('run')), ('Stop Teams', lambda: self.command('stop')),
-                                ('Handle Currency Selected', self.handle_currency_selected), ('Open Logs', self.logs)]:
+                                ('Handle Currency Selected', self.handle_currency_selected), ('Open ToT', self.open_tot_all), ('Open Logs', self.logs)]:
             button = QPushButton(label)
             if label == 'Launch Selected':
                 button.setProperty('primary', True)
@@ -343,8 +350,8 @@ class Desktop(QMainWindow):
         self.grid.setCellWidget(row, COLUMNS.index('team'), combo)
         self.sync_team_selector(account_id)
         combo.activated.connect(lambda index, aid=account_id: self.choose_team(aid))
-        for key in ('pause', 'resume', 'stop', 'currency'):
-            button = QPushButton('Handle Currency' if key == 'currency' else key.title())
+        for key in ('pause', 'resume', 'stop', 'currency', 'tot'):
+            button = QPushButton('Handle Currency' if key == 'currency' else 'Open ToT' if key == 'tot' else key.title())
             if key == 'currency':
                 button.setToolTip('Test the Eye of the North ectoplasm handler using the existing 800–900 platinum valuation rules. Runs after returning to an outpost.')
             button.clicked.connect(lambda checked=False, action=key, aid=account_id: self.row_action(aid, action))
@@ -426,6 +433,8 @@ class Desktop(QMainWindow):
         try:
             if action == 'currency':
                 self.request_currency({account_id})
+            elif action == 'tot':
+                self.request_tot({account_id})
             elif action == 'stop':
                 account = next(a for a in self.config['accounts'] if a['id'] == account_id)
                 session = self.sessions.get(account['team'])
@@ -438,6 +447,36 @@ class Desktop(QMainWindow):
                 self.command({'resume': 'run', 'pause': 'pause', 'stop': 'stop'}[action])
         finally:
             self.checked = selected
+
+    def open_tot_all(self):
+        self.request_tot({a['id'] for a in self.config['accounts']})
+
+    def request_tot(self, account_ids):
+        if self.update_busy or self.busy:
+            self.notice.set('Finish launching/updating before Open ToT.')
+            return
+        targets = []
+        for account in self.config['accounts']:
+            if account['id'] not in account_ids:
+                continue
+            session = self.sessions.get(account['team'], {})
+            pid = session.get('pids', {}).get(account['id'])
+            if not pid or not engine.alive(pid):
+                continue
+            status = read_status(Path(session['dir']) / (account['id'] + '.status.ini'))
+            if int(status.get('launchpid', status.get('pid', 0))) != pid:
+                self.notice.set('Waiting for a current worker status; retry Open ToT shortly.')
+                return
+            if status.get('totactive') == '1':
+                targets.append((session, account))
+                continue
+            if status.get('phase') != 'Paused' or status.get('mode') != 'pause' or int(status.get('instance', -1)) != 0 or status.get('currencyactive') == '1':
+                self.notice.set('Pause all targeted accounts in an outpost before Open ToT. No requests were sent.')
+                return
+            targets.append((session, account))
+        for session, account in targets:
+            write_control(Path(session['dir']) / (account['id'] + '.command.ini'), tot_request=uuid.uuid4().hex)
+        self.notice.set(f'Open ToT requested for {len(targets)} account(s): Great Temple → Kazuma → bags → cakes → ToA and resume.' if targets else 'Launch and pause accounts in an outpost before Open ToT.')
 
     def handle_currency_selected(self):
         self.request_currency(self.checked)
@@ -453,6 +492,8 @@ class Desktop(QMainWindow):
             session = self.sessions.get(account['team'], {})
             pid = session.get('pids', {}).get(account['id'])
             if not pid or not engine.alive(pid):
+                continue
+            if read_status(Path(session['dir']) / (account['id'] + '.status.ini')).get('totactive') == '1':
                 continue
             write_control(Path(session['dir']) / (account['id'] + '.command.ini'), currency_request=uuid.uuid4().hex)
             queued += 1
@@ -542,7 +583,10 @@ class Desktop(QMainWindow):
 
 
 def main():
+    if os.name == 'nt':
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('SkelefarmHub.Desktop')
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(str(Path(getattr(sys, '_MEIPASS', engine.ROOT)) / 'assets' / 'skele-taco.ico')))
     app.setStyleSheet(STYLE)
     if os.name != 'nt':
         QMessageBox.critical(None, 'Windows required', 'Skelefarm Hub requires Windows.')

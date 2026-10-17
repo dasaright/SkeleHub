@@ -20,9 +20,9 @@ Remove-Item (Join-Path 'dist' $bridge) -ErrorAction SilentlyContinue
 $compileArgs = '/in "' + "$PSScriptRoot\GwAu3Bridge.au3" + '" /out "' + "$PSScriptRoot\dist\$bridge" + '" /x86'
 $compiled = Start-Process -FilePath $compiler -ArgumentList $compileArgs -Wait -PassThru
 if ($compiled.ExitCode -ne 0 -or !(Test-Path (Join-Path 'dist' $bridge))) { throw 'Native bridge compilation failed.' }
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name "Skelefarm-worker-$version" --paths . --add-binary "dist\$bridge;." worker.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name "Skelefarm-worker-$version" --icon assets/skele-taco.ico --paths . --add-binary "dist\$bridge;." worker.py
 if ($LASTEXITCODE -ne 0 -or !(Test-Path (Join-Path 'dist' $worker))) { throw 'Python worker build failed.' }
-python -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name 'Skelefarm Hub' --paths . hub.pyw
+python -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name 'Skelefarm Hub' --icon assets/skele-taco.ico --add-data 'assets;assets' --paths . hub.pyw
 if ($LASTEXITCODE -ne 0) { throw 'Hub build failed.' }
 Copy-Item README.md, AUDIT.md -Destination dist -Force
 $package = Join-Path $PSScriptRoot "SkeleHub-$version-windows.zip"

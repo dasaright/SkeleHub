@@ -104,3 +104,7 @@ Add 1–10 account bulk form with numbered fields, whole-batch validation and cr
 ## v0.4.6
 
 Reduce disconnected/loading stall timeout to 10 seconds, detect login-screen stalls and stale bridge heartbeats, and expedite owned-process closure/relaunch without the additional error grace period. Keep ordinary party waiting and intentional stops unchanged. Rename legacy embark stage to explicit Eye of the North and migrate persisted progress; use automatic America district selection and guard quote requests by merchant map.
+
+## v0.4.7
+
+Generate anime white skull eating relay taco; embed PNG/ICO in hub and PE icons, set stable Windows taskbar identity and display header artwork. Add paused-only per-account and all-running-account Open ToT controls. Implement independent persisted GTB/Kazuma workflow: storage-aware bag opening, exact individual 250-stack allowlist guards, whole-stack banking with full-bank retention, guarded deletion, cookie withdrawals and 50:1 cake exchanges with verified receipts, then ToA/resume/party wait. Every mutation is guarded again in native bridge. Receipt state is written before dispatch, retained across recovery and never blindly repeated. Unknown items and partial stacks are preserved. Native Kazuma collector exchange availability is not live-tested; missing catalog/receipt holds rather than inventing dialog packets.

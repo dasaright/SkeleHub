@@ -142,3 +142,46 @@ class QtDesktopTests(unittest.TestCase):
             self.assertEqual(dialog.records()[9]['password'], ' secret ')
         finally:
             dialog.close()
+
+    def test_open_tot_controls_are_paused_only_and_bulk_ignores_row_selection(self):
+        import controller
+        import copy
+        import json
+        from core import DEFAULT, atomic_text, write_ini
+        from worker import read_ini
+        from desktop import Desktop, COLUMNS
+        from PySide6.QtWidgets import QLabel
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = copy.deepcopy(DEFAULT)
+            config['accounts'] = [dict(id=aid, character=char, team='Team 1', leader=i==0) for i, (aid, char) in enumerate([('one', 'Alpha'), ('two', 'Beta')])]
+            settings, sessions = root / 'settings.json', root / 'sessions.json'
+            atomic_text(settings, json.dumps(config))
+            with patch.object(controller, 'CONFIG', settings), patch.object(controller, 'SESSIONS', sessions), patch.object(controller, 'DATA', root):
+                window = Desktop()
+                try:
+                    self.assertEqual(COLUMNS.index('tot'), COLUMNS.index('currency') + 1)
+                    self.assertFalse(window.windowIcon().isNull())
+                    self.assertFalse(window.findChild(QLabel, 'skele_logo').pixmap().isNull())
+                    session = root / 'session'
+                    session.mkdir()
+                    window.sessions = {'Team 1': {'dir': str(session), 'pids': {'one': 123, 'two': 456}}}
+                    for aid, pid, mode in [('one', 123, 'pause'), ('two', 456, 'run')]:
+                        write_ini(session / (aid+'.command.ini'), {'Control': {'Mode': mode, 'DisableRendering': 1}})
+                        write_ini(session / (aid+'.status.ini'), {'Worker': {'PID': pid, 'Mode': mode, 'Phase': 'Paused' if mode == 'pause' else 'Ready', 'Instance': 0}})
+                    with patch.object(controller, 'alive', return_value=True):
+                        window.open_tot_all()
+                        self.assertFalse(read_ini(session / 'one.command.ini').has_option('Control', 'ToTRequest'))
+                        write_ini(session / 'two.status.ini', {'Worker': {'PID': 456, 'Mode': 'pause', 'Phase': 'Paused', 'Instance': 0}})
+                        window.checked = {'one'}
+                        window.open_tot_all()
+                        self.assertTrue(read_ini(session / 'two.command.ini')['Control']['ToTRequest'])
+                        first = read_ini(session / 'one.command.ini')['Control']['ToTRequest']
+                        window.grid.cellWidget(0, COLUMNS.index('tot')).click()
+                        self.assertNotEqual(read_ini(session / 'one.command.ini')['Control']['ToTRequest'], first)
+                        self.assertEqual(read_ini(session / 'one.command.ini')['Control']['Mode'], 'pause')
+                        self.assertEqual(read_ini(session / 'one.command.ini')['Control']['DisableRendering'], '1')
+                finally:
+                    window.force_close = True
+                    window.close()
+                    self.app.processEvents()

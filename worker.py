@@ -12,6 +12,7 @@ import time
 import traceback
 from core import write_ini, read_status, write_control
 from game_bridge import GameBridge, fields
+from tot import OpenToT
 
 TOA, UW = 138, 72
 from farm_build import BUILD, SKILLS, SEQUENCE
@@ -99,6 +100,7 @@ class Worker:
         self.combat_started = False
         self.peer_error_since = None
         self.economy = Economy(self)
+        self.tot = OpenToT(self)
 
     def log(self, text):
         if self.log_path.exists() and self.log_path.stat().st_size > 5 * 1024 * 1024:
@@ -145,6 +147,7 @@ class Worker:
                                     ('instance', 'Instance'), ('ingame', 'Ingame'), ('visible', 'Visible'), ('is_party_leader', 'IsPartyLeader'), ('game_pid', 'GamePID')]:
             fields[destination] = self.s.get(source, 0)
         fields.update(self.economy.telemetry())
+        fields.update(self.tot.telemetry())
         write_ini(self.status_path, {'Worker': fields})
 
     def peer(self, account_id):
@@ -343,6 +346,9 @@ class Worker:
         request = control.get('Control', 'CurrencyRequest', fallback='')
         if request:
             self.economy.request_currency(request)
+        self.tot.request(control.get('Control', 'ToTRequest', fallback=''))
+        if self.tot.tick():
+            return True
         if self.mode == 'pause' and self.s.get('instance') == 0 and not self.economy.currency_pending:
             if self.phase != 'Paused':
                 self.change('Paused', 'Paused in outpost')
@@ -440,10 +446,11 @@ class Worker:
             self.change('Travel', 'Regrouping in configured district')
             return
         currency_peers = [m['character'] for m in self.members if m['id'] != self.id
-                          and read_status(self.session / (m['id'] + '.status.ini')).get('currencyactive') == '1']
+                          and (read_status(self.session / (m['id'] + '.status.ini')).get('currencyactive') == '1'
+                               or read_status(self.session / (m['id'] + '.status.ini')).get('totactive') == '1')]
         if currency_peers:
             self.phase_started = self.clock()
-            self.state = 'Waiting for currency handling: ' + ', '.join(currency_peers)
+            self.state = 'Waiting for account maintenance: ' + ', '.join(currency_peers)
             return
         if self.exact_party():
             if self.phase != 'Ready':

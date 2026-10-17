@@ -198,6 +198,17 @@ Func BridgeDispatch(ByRef $a)
             Local $deposit = _Min(Int($a[2]), _Min(Item_GetInventoryInfo("GoldCharacter"), 1000000 - Item_GetInventoryInfo("GoldStorage")))
             If $deposit <= 0 Then Return "0"
             Item_DepositGold($deposit)
+        Case "tot_inventory"
+            Return BridgeToTInventory()
+        Case "tot_open", "tot_delete", "tot_bank", "tot_withdraw"
+            If Map_GetMapID() <> 248 Or Map_GetInstanceInfo("Type") <> 0 Then Return "0"
+            Return BridgeToTAction($a[1], Int($a[2]))
+        Case "tot_exchange"
+            If Map_GetMapID() <> 248 Or Map_GetInstanceInfo("Type") <> 0 Then Return "0"
+            Local $kazuma = BridgeNpcName("Kazuma")
+            If $kazuma = 0 Or BridgeDistanceTo($kazuma) > 200 Then Return "0"
+            If BridgeQuantity(28433) < 50 Then Return "0"
+            Return Int(Merchant_CollectorExchange(36681, 50, 28433))
         Case "bank"
             Return BridgeBank(Int($a[2]))
         Case "npc_near"
@@ -400,4 +411,92 @@ Func BridgeEctoQuote()
         Return 0
     Next
     Return 0
+EndFunc
+
+Func BridgeToTInventory()
+    Local $items = "", $stored = "", $free = 0
+    For $bag = 1 To $GC_I_INVENTORY_STORAGE14
+        If $bag > 4 And $bag < $GC_I_INVENTORY_STORAGE1 Then ContinueLoop
+        For $slot = 1 To Item_GetBagInfo($bag, "Slots")
+            Local $ptr = Item_GetItemBySlot($bag, $slot)
+            If $ptr = 0 Then
+                If $bag <= 4 Then $free += 1
+                ContinueLoop
+            EndIf
+            Local $entry = Item_ItemID($ptr) & ":" & Item_GetItemInfoByPtr($ptr, "ModelID") & ":" & Item_GetItemInfoByPtr($ptr, "Quantity") & ":" & $bag & ":" & $slot & ","
+            If $bag <= 4 Then
+                $items &= $entry
+            Else
+                $stored &= $entry
+            EndIf
+        Next
+    Next
+    Return "items=" & $items & @TAB & "stored=" & $stored & @TAB & "free=" & $free & @TAB & "storage_ready=" & Int(Item_GetBagInfo($GC_I_INVENTORY_STORAGE1, "Slots") > 0)
+EndFunc
+
+Func BridgeToTAction($action, $id)
+    ; Locate the requested ID in its current bag; never act on a recycled pointer.
+    For $bag = 1 To $GC_I_INVENTORY_STORAGE14
+        If $bag > 4 And $bag < $GC_I_INVENTORY_STORAGE1 Then ContinueLoop
+        For $slot = 1 To Item_GetBagInfo($bag, "Slots")
+            Local $ptr = Item_GetItemBySlot($bag, $slot)
+            If $ptr = 0 Then ContinueLoop
+            If Item_ItemID($ptr) <> $id Then ContinueLoop
+            Local $model = Item_GetItemInfoByPtr($ptr, "ModelID"), $qty = Item_GetItemInfoByPtr($ptr, "Quantity")
+            Switch $action
+                Case "tot_open"
+                    If $bag > 4 Or $model <> 28434 Or $qty < 1 Then Return 0
+                    Item_UseItem($ptr)
+                    Return 1
+                Case "tot_delete"
+                    If $bag > 4 Or $qty <> 250 Then Return 0
+                    If $model <> 6049 And $model <> 6369 And $model <> 15837 Then Return 0
+                    Item_DestroyItem($id)
+                    Return 1
+                Case "tot_bank"
+                    If $bag > 4 Or $qty <> 250 Then Return 0
+                    If $model <> 6367 And $model <> 6368 And $model <> 28431 And $model <> 28432 And $model <> 28433 Then Return 0
+                    ; Move a complete 250 stack atomically; no partial spill if storage is full.
+                    For $dest = $GC_I_INVENTORY_STORAGE1 To $GC_I_INVENTORY_STORAGE14
+                        For $target = 1 To Item_GetBagInfo($dest, "Slots")
+                            If Item_GetItemBySlot($dest, $target) = 0 Then
+                                Item_MoveItem($ptr, $dest, $target)
+                                Return 1
+                            EndIf
+                        Next
+                    Next
+                    Return 0
+                Case "tot_withdraw"
+                    If $bag < $GC_I_INVENTORY_STORAGE1 Or ($model <> 28434 And $model <> 28433) Then Return 0
+                    For $dest = 1 To 4
+                        For $target = 1 To Item_GetBagInfo($dest, "Slots")
+                            Local $other = Item_GetItemBySlot($dest, $target)
+                            If $other = 0 Then ContinueLoop
+                            If Item_GetItemInfoByPtr($other, "ModelID") <> $model Then ContinueLoop
+                            Local $room = 250 - Item_GetItemInfoByPtr($other, "Quantity")
+                            If $room > 0 Then
+                                Item_MoveItem_($ptr, $dest, $target, _Min($qty, $room))
+                                Return 1
+                            EndIf
+                        Next
+                    Next
+                    For $dest = 1 To 4
+                        For $target = 1 To Item_GetBagInfo($dest, "Slots")
+                            If Item_GetItemBySlot($dest, $target) = 0 Then
+                                Item_MoveItem($ptr, $dest, $target)
+                                Return 1
+                            EndIf
+                        Next
+                    Next
+                    Return 0
+            EndSwitch
+        Next
+    Next
+    Return 0
+EndFunc
+
+Func BridgeDistanceTo($id)
+    Local $dx = Agent_GetAgentInfo(-2, "X") - Agent_GetAgentInfo($id, "X")
+    Local $dy = Agent_GetAgentInfo(-2, "Y") - Agent_GetAgentInfo($id, "Y")
+    Return Sqrt($dx * $dx + $dy * $dy)
 EndFunc
